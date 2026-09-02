@@ -1,0 +1,9 @@
+ LOAD root;src
+
+ src←⊂':Namespace cold'
+
+ src,←⊃⎕NGET(root,'/lnk/LNK.apl')1
+
+ src,←⊂':EndNamespace'
+
+ ⎕FIX src
