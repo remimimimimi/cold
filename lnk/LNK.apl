@@ -1,6 +1,6 @@
 ⎕IO←0
 
-PS_ARGS←{args←⍵
+PS∆ARGS←{args←⍵
     ∨/'-h' '--help'∊args:'There should be help printed'⎕SIGNAL 200
     ∨/'-v' '--version'∊args:'There should be version printed'⎕SIGNAL 200
 
