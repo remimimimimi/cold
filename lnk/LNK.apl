@@ -17,4 +17,4 @@ PS_ARGS←{args←⍵
         m←⍵∘≡¨(≢⍵)↑¨args ⋄ v←(≢⍵)↓¨m/args ⋄ ⊃¯1↑(⊂⍺),v
     }¨'-dynamic-linker' '-o' '--sysroot=' '--hash-style=' '--build-id=' '--dependency-file='
     o.(static pie)←'-static' '-pie'∊args
-    o.input←(~{⊃'-'⍷⍵}¨args)/args ⋄ o}
+    o.input←args/⍨'-'≠⊃¨args ⋄ o}
