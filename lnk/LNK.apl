@@ -17,3 +17,9 @@ PS∆ARGS←{args←⍵
     }←'-dynamic-linker' '-o' '--sysroot=' '--hash-style=' '--build-id=' '--dependency-file='
     o.(static pie)←'-static' '-pie'∊args
     o.input←args/⍨'-'≠⊃¨args ⋄ o}
+
+OUT∆INIT←{size←⍺ ⋄ file←⍵
+    t←file ⎕NCREATE 0
+    _←size ⎕NRESIZE t
+    _←⎕NUNTIE t
+    83 size ⎕MAP file 'W'}
