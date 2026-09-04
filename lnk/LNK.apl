@@ -5,9 +5,9 @@ PS∆ARGS←{args←⍵
     ∨/'-v' '--version'∊args:'There should be version printed'⎕SIGNAL 200
 
     o←⎕NS⍬
-    o.(out root interp)←'a.out' '' ''
-    o.(hashstyle buildid dependencyfile)←'' '' ''
-    o.(input path lib)←3⍴⊂⍬ ⋄ o.(static pie)←2⍴0
+    o.out←'a.out'
+    o.(root interp hashstyle buildid dependencyfile)←''
+    o.(input path lib)←⊂⍬ ⋄ o.(static pie)←0
 
     m←args∊'-L' '-l' '-dynamic-linker' '-o'
     (m/args),←(m,0)/1⌽args,⊂'' ⋄ args←(~0,¯1↓m)/args
