@@ -6,7 +6,7 @@ PS∆ARGS←{args←⍵
 
     o←⎕NS⍬
     o.out←'a.out' ⋄ o.(input path lib)←⊂⍬ ⋄ o.(static pie)←0
-    o.(root interp hashstyle buildid dependencyfile)←''
+    o.(root interp hashstyle buildid dependencyfile)←5⍴''
 
     m←args∊'-L' '-l' '-dynamic-linker' '-o'
     (m/args),←(m,0)/1⌽args,⊂'' ⋄ args←(~0,¯1↓m)/args
@@ -23,3 +23,11 @@ OUT∆INIT←{size←⍺ ⋄ file←⍵
     _←size ⎕NRESIZE t
     _←⎕NUNTIE t
     83 size ⎕MAP file 'W'}
+
+LNK←{o←PS∆ARGS ⍵
+    0≡≢o.input: 'Expected at least one input file to link'⎕SIGNAL 200
+
+    execsz←1
+    out←execsz OUT∆INIT o.out
+    out[0]←0
+    ⍬}

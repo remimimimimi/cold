@@ -1,0 +1,135 @@
+:Namespace UT
+⎕IO←0
+⎕ML←1
+
+PROJECT_ROOT←''
+TMP_ROOT←'/tmp/cold-tests/'
+
+ProjectRoot←{
+    0≠≢PROJECT_ROOT:PROJECT_ROOT
+    root←0⊃1 ⎕NPARTS'' ⋄ (-'/'=⊃¯1↑root)↓root}
+
+ResolveAsset←{
+    assets←(ProjectRoot ⍬),'/tests/assets/'
+    path←assets,⍵
+    ⎕NEXISTS path:path
+    ~'.o'≡¯2↑⍵:('Asset does not exist: ',path)⎕SIGNAL 11
+
+    stem←¯2↓⍵
+    source←assets,stem,'.s'
+    kind←~⎕NEXISTS source
+    source←assets,stem,kind⊃'.s' '.c'
+    ~⎕NEXISTS source:('Asset and source do not exist: ',path)⎕SIGNAL 11
+
+    path←assets,'.data/',⍵
+    ⎕NEXISTS path:path
+
+    dir←⊃1 ⎕NPARTS path
+    result←⎕SHELL'mkdir -p "',dir,'"'
+    0 0≢result[2 3]:('Cannot create generated-assets directory: ',dir)⎕SIGNAL 11
+
+    cmdkind←kind⊃'as --64 "' 'gcc -c -O0 -fno-pie -fno-pic -fcf-protection=none -nostdlib -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables "'
+    cmd←cmdkind,source,'" -o "',path,'"'
+    result←⎕SHELL cmd
+    0 0≢result[2 3]:('Cannot build ',source,', command ',cmd,' failed: ',⍕result)⎕SIGNAL 11
+    path}
+
+AssetPaths←{ResolveAsset¨⊆⍵}
+
+CheckOutput←{expected←⍺ ⋄ args←⍵
+    '/'≢⊃expected:'Expected output must be an absolute path'⎕SIGNAL 11
+
+    test←⊃¯1↑'.'(≠⊆⊢)⊃1↓⎕SI
+    parts←1 ⎕NPARTS expected
+    base←1⊃parts
+    ~('.expected'≡2⊃parts)∧(test,'.')≡(1+≢test)↑base:('Expected filename must be ',test,'.<extension>.expected')⎕SIGNAL 11
+    ~⎕NEXISTS expected:('Expected output does not exist: ',expected)⎕SIGNAL 11
+
+    actual←TMP_ROOT,base
+    _←3 ⎕MKDIR TMP_ROOT
+    _←1 ⎕NDELETE actual
+
+    _←LNK(,⊆args),'-o'actual
+    ~⎕NEXISTS actual:('Linker did not create output: ',actual)⎕SIGNAL 11
+
+    cmp←⎕SHELL'cmp'expected actual ⋄ status←2⊃cmp
+    0=status:1
+    1=status:('Output differs. Run: diffoscope "',expected,'" "',actual,'"')⎕SIGNAL 11
+    ('cmp failed with status ',(⍕status),': ',⍕⊃cmp)⎕SIGNAL 11 ⋄ ⍬}
+
+TestsIn←{names←⍵.⎕NL ¯3 ⋄ names/⍨'test_'∘≡¨5↑¨names}
+
+GlobMatch←{pattern←⍺ ⋄ name←⍵
+    ⍝ Support only * and ? glob patterns. Extend if needed.
+    special←'.^$+()[]{}|\'
+    Escape←{⍵∊special:'\',⍵ ⋄ ⍵}
+    pattern←'^',(∊{⍵='*':'.*' ⋄ ⍵='?':'.' ⋄ Escape ⍵}¨pattern),'$'
+    0<≢pattern ⎕S 0⊢name}
+
+SelectTests←{⍵/⍨∨⌿⍺∘.GlobMatch⍵}
+
+RunOne←{suite name←⍵
+    start←⎕AI[3]
+    0::name 0(,⎕DMX.DM)(⎕AI[3]-start)
+
+    ⎕PATH←'↑'
+    ns←{9=⎕NC'basic':⎕THIS.⍎suite ⋄ #.cold.⍎suite}⍬
+
+    _←ns.⍎name,' ⍬'
+    name 1 ''(⎕AI[3]-start)}
+
+Run←{
+  ⍝ Prepare
+    0=⎕NC'#.LOAD':'LOAD is not defined in the root namespace, please run '']create # ws''.'⎕SIGNAL 11
+    _←{0≠⎕NC'#.isolate':⍬ ⋄ #.⎕CY'isolate'}⍬
+    root←ProjectRoot ⍬
+    _←#.LOAD root
+    _←#.cold.⎕FX¨⎕CR¨'ProjectRoot' 'ResolveAsset' 'AssetPaths' 'CheckOutput' 'RunOne'
+    #.cold.PROJECT_ROOT←root
+    #.cold.TMP_ROOT←TMP_ROOT
+
+  ⍝ Parse
+    words←' '(≠⊆⊢),⍵
+    serial←∨/words≡¨⊂'-serial'
+    selectors←words~⊂'-serial'
+    0=≢selectors:'Usage: UT.Run ''B [-serial]'', ''I [-serial]'', or ''glob [glob ...] [-serial]'''⎕SIGNAL 11
+
+  ⍝ Select
+    basic←'basic'∘{⍺ ⍵}¨TestsIn #.cold.basic
+    integration←'integration'∘{⍺ ⍵}¨TestsIn #.cold.integration
+    suiteMode←(1=≢selectors)∧(1=≢⊃selectors)∧(⊃⊃selectors)∊'BI'
+    jobs←{
+        suiteMode:{
+            selected←('BI'⍳⊃selectors)⊃(⊂basic),⊂integration
+            0=≢selected:('No tests found in suite ',⊃selectors)⎕SIGNAL 11
+            selected}⍬
+        selected←('basic'∘{⍺ ⍵}¨selectors SelectTests 1⊃¨basic),('integration'∘{⍺ ⍵}¨selectors SelectTests 1⊃¨integration)
+        0=≢selected:('No tests match: ',∊selectors,¨⊂' ')⎕SIGNAL 11
+        selected}⍬
+
+  ⍝ Run
+    Serial←{RunOne¨⍵}
+    Parallel←{
+        isolates←#.isolate.New¨((≢⍵)⌊#.isolate.Config'processors')⍴⊂#.cold
+        0::{_←⎕EX'isolates' ⋄ ⎕SIGNAL ⎕DMX}⍬
+        result←('RunOne' '' ''#.ll.EachX isolates)⍵
+        _←⎕EX'isolates'
+        result}
+    Debug←{
+        suite name←⍵
+        ns←#.cold.⍎suite
+        _←1 ns.⎕STOP name
+        ns.⍎name,' ⍬'}
+
+    (~suiteMode)∧1=≢jobs:Debug(⊃jobs)
+    results←{serial:Serial jobs ⋄ Parallel jobs}⍬
+
+  ⍝ Report
+    Print←{
+        1=1⊃⍵:⎕←'PASS ',0⊃⍵
+        ⎕←'FAIL ',(0⊃⍵),' - ',2⊃⍵}
+    _←Print¨results
+    failures←+/~1⊃¨results
+    ⎕←(⍕≢results),' tests: ',(⍕(≢results)-failures),' passed, ',(⍕failures),' failed'
+    failures>0:((⍕failures),' test(s) failed')⎕SIGNAL 11 ⋄ ⍬}
+:EndNamespace

@@ -1,9 +1,25 @@
- LOAD root;src
+r←LOAD root;file;src
 
- src←⊂':Namespace cold'
+src←⊂':Namespace cold'
 
- src,←⊃⎕NGET(root,'/lnk/LNK.apl')1
+src,←⊃⎕NGET(root,'/lnk/LNK.apl')1
 
- src,←⊂':EndNamespace'
+src,←⊂':Namespace basic'
+src,←⊂'⎕PATH←''↑'''
+file←root,'/tests/B.apl'
+:If ⎕NEXISTS file
+    src,←⊃⎕NGET file 1
+:EndIf
+src,←⊂':EndNamespace'
 
- ⎕FIX src
+src,←⊂':Namespace integration'
+src,←⊂'⎕PATH←''↑'''
+file←root,'/tests/I.apl'
+:If ⎕NEXISTS file
+    src,←⊃⎕NGET file 1
+:EndIf
+src,←⊂':EndNamespace'
+
+src,←⊂':EndNamespace'
+
+r←⎕FIX src
