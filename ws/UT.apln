@@ -117,8 +117,15 @@ Run←{
         result}
     Debug←{
         suite name←⍵
+        SetBreaks←{
+            source←↓#.cold.⎕CR ⍵
+            lines←⍸{∨/'⍝BREAK'⍷⍵}¨source
+            0=≢lines:0
+            _←(lines∪#.cold.⎕STOP ⍵)#.cold.⎕STOP ⍵
+            ≢lines}
+        breaks←+/SetBreaks¨#.cold.⎕NL ¯3
         ns←#.cold.⍎suite
-        _←1 ns.⎕STOP name
+        _←{0<breaks:⍬ ⋄ 1 ns.⎕STOP name}⍬
         ns.⍎name,' ⍬'}
 
     (~suiteMode)∧1=≢jobs:Debug(⊃jobs)
