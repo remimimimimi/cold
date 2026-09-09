@@ -1,5 +1,10 @@
 ⎕IO←0
 
+U32←{⍵+(2*32)×⍵<0} ⋄ U64←{(U32 ⍺[;⍵])+(2*32)×U32 ⍺[;⍵+1]}
+S64←{(U32 ⍺[;⍵])+(2*32)×⍺[;⍵+1]} ⋄ SB←{b←,⍉⊖(⍺⍴256)⊤⍵ ⋄ b-256×b≥128}
+ZSTR←{80⎕DR(⍵⍳0)↑⍵} ⋄ ZSTRU←{⎕UCS(⍵⍳0)↑⍵}
+ALIGN←{⍺+⍵|-⍺}
+
 PS∆ARGS←{args←⍵
     ∨/'-h' '--help'∊args:'There should be help printed'⎕SIGNAL 200
     ∨/'-v' '--version'∊args:'There should be version printed'⎕SIGNAL 200
@@ -24,10 +29,117 @@ OUT∆INIT←{size←⍺ ⋄ file←⍵
     _←⎕NUNTIE t
     83 size ⎕MAP file 'W'}
 
+ELF∆IDENT∆EXP←127 69 76 70 2 1 1 0 0
+
 LNK←{o←PS∆ARGS ⍵
     0≡≢o.input: 'Expected at least one input file to link'⎕SIGNAL 200
 
-    execsz←1
-    out←execsz OUT∆INIT o.out
-    out[0]←0
+    ⍝ Open files
+    paths←∪o.input
+    objs←{83 ¯1 ⎕MAP ⍵ 'R'}¨paths
+    ⍝ objs←objs,objs
+
+    ⍝ ELF header
+    headerbytes←{16↓64↑⍵}¨objs
+    ∨⌿ELF∆IDENT∆EXP∘≢¨9∘↑¨objs:'Unexpected ELF file identification'⎕SIGNAl 200
+    (e_type e_machine)←↓⍉↑163∘⎕DR¨4∘↑¨headerbytes
+    ∨⌿1∘≢¨e_type:'One of the input files is not an object file'⎕SIGNAL 200
+    ∨⌿62∘≢¨e_machine:'One of the input files is not for AMD64'⎕SIGNAL 200
+    (_ _ e_shoff)←↓⍉↑({256⊥⌽256|⍵}⍤1)(≢objs)3 8⍴↑{24↓48↑⍵}¨objs
+    (_ _ _ e_shentsize e_shnum e_shstrndx)←↓⍉↑({256⊥⌽256|⍵}⍤1)(≢objs)6 2⍴↑{¯12↑64↑⍵}¨objs
+    ∨⌿64≠e_shentsize:'Unexpected section-header entry size'⎕SIGNAL 200
+
+    ⍝ Sections headers
+    shtbytes←(e_shoff+⍳¨64×e_shnum)(⊂⍛⌷)¨objs
+    shtwords←(+/e_shnum)16⍴323⎕DR∊shtbytes
+    (sh_name sh_type sh_link sh_info)←↓⍉U32⍤0⊢shtwords[;0 1 10 11]
+    (sh_flags sh_offset sh_size sh_addralign sh_entsize)←shtwords∘U64¨2 6 8 12 14
+    shstart←¯1↓+\0,e_shnum ⋄ shown←e_shnum/⍳≢e_shnum
+
+    ⍝ Symbols
+    sym_sh←⍸sh_type=2 ⋄ symcount←sh_size[sym_sh]÷24
+    ∨⌿24≠sh_entsize[sym_sh]:'Unexpected symbol entry size'⎕SIGNAL 200
+    ∨⌿0≠24|sh_size[sym_sh]:'Invalid symbol table size'⎕SIGNAL 200
+    symbytes←(sh_offset[sym_sh]+⍳¨sh_size[sym_sh])(⊂⍛⌷)¨objs[shown[sym_sh]]
+    symwords←(+/symcount)6⍴323⎕DR∊symbytes
+    (st_info st_other st_shndx)←(256 256 65536){⍺|⌊symwords[;1]÷⍵}¨1 256 65536
+    ∨⌿st_shndx≥65280:'Special symbol section indices are not supported'⎕SIGNAL 200
+    st_bind←⌊st_info÷16 ⋄ st_type←16|st_info
+    st_name←U32 symwords[;0] ⋄ (st_value st_size)←symwords∘U64¨2 4
+    symstart←¯1↓+\0,symcount ⋄ symown←symcount/⍳≢symcount ⋄ symobj←shown[sym_sh[symown]]
+    symtabid←(≢sh_type)⍴¯1 ⋄ symtabid[sym_sh]←⍳≢sym_sh
+    st_sec←shstart[symobj]+st_shndx ⍝ NULL section handles undefined symbols
+
+    ⍝ Symbols string table
+    symstr_sh←shstart[shown[sym_sh]]+sh_link[sym_sh]
+    ∨⌿shown[symstr_sh]≠shown[sym_sh]:'Symbol table links outisde its object'⎕SIGNAL 200
+    symstrbytes←(sh_offset[symstr_sh]+⍳¨sh_size[symstr_sh])(⊂⍛⌷)¨objs[shown[symstr_sh]]
+    strsize←≢¨symstrbytes ⋄ strstart←¯1↓+\0,strsize ⋄ strpool←∊symstrbytes
+    nameat←strstart[symown]+st_name
+    ∨⌿0≠strpool[strstart+strsize-1]:'Invalid symbol string table'⎕SIGNAL 200
+    zero←⍸strpool=0 ⋄ namelen←zero[(zero⍸nameat)+0≠strpool[nameat]]-nameat
+    names←{strpool[nameat[⍵]+⍳namelen[⍵]]}¨⍳≢st_name
+
+    ⍝ RELA
+    rela_sh←⍸sh_type=4 ⋄ relacount←sh_size[rela_sh]÷24
+    ∨⌿24≠sh_entsize[rela_sh]:'Unexpected RELA entry size'⎕SIGNAL 200
+    ∨⌿0≠24|sh_size[rela_sh]:'Unexpected RELA section size'⎕SIGNAL 200
+    relabytes←(sh_offset[rela_sh]+⍳¨sh_size[rela_sh])(⊂⍛⌷)¨objs[shown[rela_sh]]
+    relawords←(+/relacount)6⍴323⎕DR∊relabytes
+    r_offset←relawords U64 0 ⋄ (r_type r_sym)←↓⍉U32⍤0⊢relawords[;2 3] ⋄ r_addend←relawords S64 4
+    relastart←¯1↓+\0,relacount ⋄ relaown←relacount/⍳≢relacount ⋄ relaobj←shown[rela_sh[relaown]]
+    relatargetsec←shstart[shown[rela_sh]]+sh_info[rela_sh]
+    r_targetsec←relatargetsec[relaown]
+    relasym_sh←shstart[shown[rela_sh]]+sh_link[rela_sh]
+    rela_symtab←symtabid[relasym_sh]
+    ∨⌿rela_symtab=¯1:'RELA does not reference a symbol table'⎕SIGNAL 200
+    r_symrow←symstart[rela_symtab[relaown]]+r_sym
+
+    ⍝ Global symbols table
+    defined←0≠st_shndx ⋄ def←⍸defined∧st_bind=1 ⋄ defnames←names[def]
+    find←defnames∘⍳ ⍝ Construct hash table
+    ∨⌿(⍳≢defnames)≠find defnames:'Multiple global symbol definitions'⎕SIGNAL 200
+    r_def←r_symrow ⋄ ru←⍸0=st_shndx[r_def] ⋄ hit←find names[r_def[ru]]
+    ∨⌿hit=≢defnames:'Undefined symbol'⎕SIGNAL 200
+    r_def[ru]←def[hit]
+
+    ⍝ Identify entry point
+    start←⊃find⊂83⎕DR'_start'
+    start=≢defnames:'Undefined symbol: _start'⎕SIGNAL 200
+    startsym←def[start]
+
+    ⍝ Layout
+    alloc←0≠2|⌊sh_flags÷2
+    file_sections←⍸alloc∧sh_type≠8 ⋄ bss_sections←⍸alloc∧sh_type=8 ⋄ sections←file_sections,bss_sections
+    base←4194304 ⋄ hdrsz←64+56 ⋄ maxalign←⌈/1,sh_addralign[sections] ⋄ first←hdrsz ALIGN maxalign
+    size←sh_size[sections] ⋄ span←maxalign×⌈size÷maxalign ⋄ rel←first+¯1↓+\0,span
+    sh_outoff←(≢sh_type)⍴¯1 ⋄ sh_outaddr←(≢sh_type)⍴0
+    sh_outoff[file_sections]←(≢file_sections)↑rel ⋄ sh_outaddr[sections]←base+rel
+    filesz←first++/(≢file_sections)↑span ⋄ memsz←first++/span
+    symaddr←sh_outaddr[st_sec]+st_value ⋄ entry←symaddr[startsym]
+    out←filesz OUT∆INIT o.out
+
+    ⍝ Copy sections
+    chunksz←2*20
+    _←{s←⍵ ⋄ n←sh_size[s]
+        pos←chunksz×⍳⌈n÷chunksz ⋄ obj←⊃objs[shown[s]]
+        _←{p←⍵ ⋄ k←chunksz⌊n-p ⋄ i←⍳k
+            out[sh_outoff[s]+p+i]←obj[sh_offset[s]+p+i]
+        ⍬}¨pos
+    ⍬}¨file_sections
+
+    ⍝ Construct headers
+    ident←ELF∆IDENT∆EXP,7⍴0
+    ehdr←,ident
+    ehdr,←2 SB 2 62
+    ehdr,←4 SB 1
+    ehdr,←8 SB entry 64 0
+    ehdr,←4 SB 0
+    ehdr,←2 SB 64 56 1 0 0 0
+    phdr←,4 SB 1 7 ⍝ PT_LOAD and PF_R | PF_W | PF_X
+    phdr,←8 SB 0 base base filesz memsz 4096
+    out[⍳64]←ehdr
+    out[64+⍳56]←phdr
+
+    ⍝BREAK
     ⍬}
