@@ -119,15 +119,6 @@ LNK←{o←PS∆ARGS ⍵
     symaddr←sh_outaddr[st_sec]+st_value ⋄ entry←symaddr[startsym]
     out←filesz OUT∆INIT o.out
 
-    ⍝ Copy sections
-    chunksz←2*20
-    _←{s←⍵ ⋄ n←sh_size[s]
-        pos←chunksz×⍳⌈n÷chunksz ⋄ obj←⊃objs[shown[s]]
-        _←{p←⍵ ⋄ k←chunksz⌊n-p ⋄ i←⍳k
-            out[sh_outoff[s]+p+i]←obj[sh_offset[s]+p+i]
-        ⍬}¨pos
-    ⍬}¨file_sections
-
     ⍝ Construct headers
     ident←ELF∆IDENT∆EXP,7⍴0
     ehdr←,ident
@@ -140,6 +131,15 @@ LNK←{o←PS∆ARGS ⍵
     phdr,←8 SB 0 base base filesz memsz 4096
     out[⍳64]←ehdr
     out[64+⍳56]←phdr
+
+    ⍝ Copy sections
+    chunksz←2*20
+    _←{s←⍵ ⋄ n←sh_size[s]
+        pos←chunksz×⍳⌈n÷chunksz ⋄ obj←⊃objs[shown[s]]
+        _←{p←⍵ ⋄ k←chunksz⌊n-p ⋄ i←⍳k
+            out[sh_outoff[s]+p+i]←obj[sh_offset[s]+p+i]
+        ⍬}¨pos
+    ⍬}¨file_sections
 
     ⍝BREAK
     ⍬}
