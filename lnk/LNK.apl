@@ -5,6 +5,15 @@ S64←{(U32 ⍺[;⍵])+(2*32)×⍺[;⍵+1]} ⋄ SB←{b←,⍉⊖(⍺⍴256)⊤�
 ZSTR←{80⎕DR(⍵⍳0)↑⍵} ⋄ ZSTRU←{⎕UCS(⍵⍳0)↑⍵}
 ALIGN←{⍺+⍵|-⍺}
 
+LAYOUT←{group size align←⍵ ⋄ ⍺←0 ⍝ optional origin
+    0=n←≢size:⍬ ⍬ ⍺
+    p←⍋group ⋄ g←group[p] ⋄ s←size[p] ⋄ a←align[p]
+    a[0,1+⍸2≠/g]←g{⌈/⍵}⌸a
+    x←⍺+0,¯1↓+\s ⋄ M←⌈/a
+    F←{⍺≥M:⍵ ⋄ m←a>⍺ ⋄ v←2|⌊(m/⍵)÷⍺ ⋄ (2×⍺)∇⍵+⍺×+\m\2≠/0,v}
+    x←1 F x ⋄ z←n⍴0 ⋄ z[p]←x
+    p z(⊃⌽x+s)}
+
 PS∆ARGS←{args←⍵
     ∨/'-h' '--help'∊args:'There should be help printed'⎕SIGNAL 200
     ∨/'-v' '--version'∊args:'There should be version printed'⎕SIGNAL 200
@@ -109,14 +118,17 @@ LNK←{o←PS∆ARGS ⍵
     startsym←def[start]
 
     ⍝ Layout
-    alloc←0≠2|⌊sh_flags÷2
-    file_sections←⍸alloc∧sh_type≠8 ⋄ bss_sections←⍸alloc∧sh_type=8 ⋄ sections←file_sections,bss_sections
-    base←4194304 ⋄ hdrsz←64+56 ⋄ maxalign←⌈/1,sh_addralign[sections] ⋄ first←hdrsz ALIGN maxalign
-    size←sh_size[sections] ⋄ span←maxalign×⌈size÷maxalign ⋄ rel←first+¯1↓+\0,span
+    alloc←0≠2|⌊sh_flags÷2 ⋄ sections←⍸alloc
+    flags←sh_flags[sections] ⋄ type←sh_type[sections] ⋄ size←sh_size[sections] ⋄ align←1⌈sh_addralign[sections]
+    write←2|flags ⋄ exec←2|⌊flags÷4
+    ∨⌿write∧exec:'Writable executable sections are not supported'⎕SIGNAL 200
+    ∨⌿~align∊2*⍳63:'Unsupported section alignment'⎕SIGNAL 200
+    nobits←type=8 ⋄ group←((~exec)+write)+3×nobits
+    base←4194304 ⋄ hdrsz←64+56 ⋄ (order rel memsz)←hdrsz LAYOUT group size align
+    file←~nobits ⋄ file_sections←file/sections ⋄ bss_sections←nobits/sections
     sh_outoff←(≢sh_type)⍴¯1 ⋄ sh_outaddr←(≢sh_type)⍴0
-    sh_outoff[file_sections]←(≢file_sections)↑rel ⋄ sh_outaddr[sections]←base+rel
-    filesz←first++/(≢file_sections)↑span ⋄ memsz←first++/span
-    symaddr←sh_outaddr[st_sec]+st_value ⋄ entry←symaddr[startsym]
+    sh_outoff[file_sections]←file/rel ⋄ sh_outaddr[sections]←base+rel
+    filesz←⌈/hdrsz,(file/rel)+file/size ⋄ symaddr←sh_outaddr[st_sec]+st_value ⋄ entry←symaddr[startsym]
     out←filesz OUT∆INIT o.out
 
     ⍝ Copy sections
