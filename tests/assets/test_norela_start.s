@@ -1,6 +1,6 @@
-.globl _start
-.text
+	.globl _start
+	.text
 _start:
-    xor %edi, %edi
-    mov $60, %eax
-    syscall
+	xor %edi, %edi
+	mov $60, %eax
+	syscall
