@@ -68,65 +68,69 @@ LNK←{o←PS∆ARGS ⍵
         files h
     }⍬
 
-    ⍝ Decode symbols
-    (s symbase)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb fh0 fhn)←files
-        symsh←⍸ht=2 ⋄ count←hz[symsh]÷24
-        ∨⌿he[symsh]≠24:'Unexpected symbol entry size'⎕SIGNAL 200
-        ∨⌿0≠24|hz[symsh]:'Invalid symbol table size'⎕SIGNAL 200
+    (s r)←{
+        ⍝ Decode symbols
+        (s symbase)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb fh0 fhn)←files
+            symsh←⍸ht=2 ⋄ count←hz[symsh]÷24
+            ∨⌿he[symsh]≠24:'Unexpected symbol entry size'⎕SIGNAL 200
+            ∨⌿0≠24|hz[symsh]:'Invalid symbol table size'⎕SIGNAL 200
 
-        bytes←(hx[symsh]+⍳¨hz[symsh])(⊂⍛⌷)¨fb[hm[symsh]]
-        words←(+/count)6⍴323⎕DR∊bytes
+            bytes←(hx[symsh]+⍳¨hz[symsh])(⊂⍛⌷)¨fb[hm[symsh]]
+            words←(+/count)6⍴323⎕DR∊bytes
 
-        (info other shndx)←(256 256 65536){⍺|⌊words[;1]÷⍵}¨1 256 65536
-        sb←⌊info÷16 ⋄ st←16|info ⋄ sn←U32 words[;0]
-        (sv sz)←words∘U64¨2 4 ⋄ so←4|other
+            (info other shndx)←(256 256 65536){⍺|⌊words[;1]÷⍵}¨1 256 65536
+            sb←⌊info÷16 ⋄ st←16|info ⋄ sn←U32 words[;0]
+            (sv sz)←words∘U64¨2 4 ⋄ so←4|other
 
-        reg←(0<shndx)∧shndx<65280
-        abs←shndx=65521 ⋄ com←shndx=65522 ⋄ xnd←shndx=65535
-        ∨⌿xnd:'Extended symbol section indices are not supported yet'⎕SIGNAL 200
-        ∨⌿(shndx≥65280)∧~abs∨com∨xnd:'Unsupported reserved symbol section index'⎕SIGNAL 200
+            reg←(0<shndx)∧shndx<65280
+            abs←shndx=65521 ⋄ com←shndx=65522 ⋄ xnd←shndx=65535
+            ∨⌿xnd:'Extended symbol section indices are not supported yet'⎕SIGNAL 200
+            ∨⌿(shndx≥65280)∧~abs∨com∨xnd:'Unsupported reserved symbol section index'⎕SIGNAL 200
 
-        start←¯1↓+\0,count ⋄ own←count/⍳≢count ⋄ obj←hm[symsh[own]]
-        symbase←(≢ht)⍴¯1 ⋄ symbase[symsh]←start
+            start←¯1↓+\0,count ⋄ own←count/⍳≢count ⋄ obj←hm[symsh[own]]
+            symbase←(≢ht)⍴¯1 ⋄ symbase[symsh]←start
 
-        ⍝ Symbols string table
-        ss←(≢sn)⍴¯1 ⋄ ss[⍸abs]←¯2 ⋄ ss[⍸com]←¯3
-        ss[rows]←fh0[obj[rows]]+shndx[rows←⍸reg]
-        strsh←fh0[hm[symsh]]+hl[symsh]
-        ∨⌿hm[strsh]≠hm[symsh]:'Symbol table links outside its object'⎕SIGNAL 200
-        strbytes←(hx[strsh]+⍳¨hz[strsh])(⊂⍛⌷)¨fb[hm[strsh]]
-        strz←≢¨strbytes ⋄ strstart←¯1↓+\0,strz ⋄ strpool←∊strbytes
-        ⍝BREAK
-        nameat←strstart[own]+sn
-        ∨⌿0≠strpool[strstart+strz-1]:'Invalid symbol string table'⎕SIGNAL 200
-        zeros←⍸strpool=0 ⋄ namelen←zeros[(zeros⍸nameat)+0≠strpool[nameat]]-nameat
-        sn←{strpool[nameat[⍵]+⍳namelen[⍵]]}¨⍳≢sn
+            ⍝ Symbols string table
+            ss←(≢sn)⍴¯1 ⋄ ss[⍸abs]←¯2 ⋄ ss[⍸com]←¯3
+            ss[rows]←fh0[obj[rows]]+shndx[rows←⍸reg]
+            strsh←fh0[hm[symsh]]+hl[symsh]
+            ∨⌿hm[strsh]≠hm[symsh]:'Symbol table links outside its object'⎕SIGNAL 200
+            strbytes←(hx[strsh]+⍳¨hz[strsh])(⊂⍛⌷)¨fb[hm[strsh]]
+            strz←≢¨strbytes ⋄ strstart←¯1↓+\0,strz ⋄ strpool←∊strbytes
+            ⍝BREAK
+            nameat←strstart[own]+sn
+            ∨⌿0≠strpool[strstart+strz-1]:'Invalid symbol string table'⎕SIGNAL 200
+            zeros←⍸strpool=0 ⋄ namelen←zeros[(zeros⍸nameat)+0≠strpool[nameat]]-nameat
+            sn←{strpool[nameat[⍵]+⍳namelen[⍵]]}¨⍳≢sn
 
-        s←sn sb st so ss sv sz
-        s symbase
-    }⍬
+            s←sn sb st so ss sv sz
+            s symbase
+        }⍬
 
-    ⍝ Decode RELA
-    r←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb fh0 fhn)←files
-        relash←⍸ht=4 ⋄ count←hz[relash]÷24
-        ∨⌿he[relash]≠24:'Unexpected RELA entry size'⎕SIGNAL 200
-        ∨⌿0≠24|hz[relash]:'Unexpected RELA section size'⎕SIGNAL 200
+        ⍝ Decode RELA
+        r←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb fh0 fhn)←files
+            relash←⍸ht=4 ⋄ count←hz[relash]÷24
+            ∨⌿he[relash]≠24:'Unexpected RELA entry size'⎕SIGNAL 200
+            ∨⌿0≠24|hz[relash]:'Unexpected RELA section size'⎕SIGNAL 200
 
-        bytes←(hx[relash]+⍳¨hz[relash])(⊂⍛⌷)¨fb[hm[relash]]
-        words←(+/count)6⍴323⎕DR∊bytes
+            bytes←(hx[relash]+⍳¨hz[relash])(⊂⍛⌷)¨fb[hm[relash]]
+            words←(+/count)6⍴323⎕DR∊bytes
 
-        rx←words U64 0 ⋄ (rt rawsym)←↓⍉U32⍤0⊢words[;2 3] ⋄ ra←words S64 4
-        own←count/⍳≢count ⋄ rh←(fh0[hm[relash]]+hi[relash])[own]
+            rx←words U64 0 ⋄ (rt rawsym)←↓⍉U32⍤0⊢words[;2 3] ⋄ ra←words S64 4
+            own←count/⍳≢count ⋄ rh←(fh0[hm[relash]]+hi[relash])[own]
 
-        symsh←fh0[hm[relash]]+hl[relash] ⋄ base←symbase[symsh]
-        ∨⌿base=¯1:'RELA does not reference a symbol table'⎕SIGNAL 200
-        rs←base[own]+rawsym
+            symsh←fh0[hm[relash]]+hl[relash] ⋄ base←symbase[symsh]
+            ∨⌿base=¯1:'RELA does not reference a symbol table'⎕SIGNAL 200
+            rs←base[own]+rawsym
 
-        rh rx rs rt ra
+            rh rx rs rt ra
+        }⍬
+
+        s r
     }⍬
 
     ⍝ Symbol resolution
-    (r common startsym zero)←{(s r)←⍵ ⋄ (sn sb st so ss sv sz)←s ⋄ (rh rx rs rt ra)←r
+    (r common startsym)←{(s r)←⍵ ⋄ (sn sb st so ss sv sz)←s ⋄ (rh rx rs rt ra)←r
         reg←ss≥0 ⋄ abs←ss=¯2 ⋄ com←ss=¯3
         weak←sb=2 ⋄ strong←sb∊1 10 ⋄ ext←strong∨weak
         defd←reg∨abs∨com
@@ -155,12 +159,12 @@ LNK←{o←PS∆ARGS ⍵
         cz[ids]←cid{⌈/⍵}⌸sz[crow] ⋄ ca[ids]←cid{⌈/⍵}⌸sv[crow]
 
         r←rh rx rdef rt ra ⋄ common←cdef cz ca
-        r common startsym zero
+        r common startsym
     }s r
 
     ⍝ Layout
     base←4194304
-    layout←{(h s common startsym zero)←⍵
+    (layout copies)←{(h s common startsym)←⍵
         (hn ht hf hm hx hz ha he hl hi)←h ⋄ (sn sb st so ss sv sz)←s ⋄ (cs cz ca)←common
         alloc←0≠2|⌊hf÷2 ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
         secz←hz[secs] ⋄ seca←1⌈ha[secs]
@@ -178,38 +182,41 @@ LNK←{o←PS∆ARGS ⍵
 
         file←~nobits ⋄ filesec←file/secs
 
+        copies←(file/hm[secs])(file/hx[secs])(file/secz)(file/secrel)
+
         shoff←(≢ht)⍴¯1 ⋄ shaddr←(≢ht)⍴0
         shoff[filesec]←file/secrel ⋄ shaddr[secs]←base+secrel
         filesz←⌈/hdrsz,(file/secrel)+file/secz
 
         reg←ss≥0 ⋄ abs←ss=¯2
         symaddr←reg\(shaddr[reg/ss]+reg/sv) ⋄ symaddr[⍸abs]←abs/sv
-        symaddr[cs]←commonaddr←base+comrel ⋄ symaddr,←0
+        symaddr[cs]←base+comrel ⋄ symaddr,←0
 
         entry←symaddr[startsym]
-        shoff shaddr commonaddr symaddr filesz memsz entry filesec
-    }h s common startsym zero
-    (lx la lc ls lfz lmz le lf)←layout
-    out←lfz OUT∆INIT o.out
+        layout←shoff shaddr symaddr filesz memsz entry
+        layout copies
+    }h s common startsym
+    out←{(lx la ls lfz lmz le)←layout
+        lfz OUT∆INIT o.out}⍬
 
     ⍝ Copy sections
-    _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (lx la lc ls lfz lmz le lf)←layout ⋄ (fb fh0 fhn)←files
+    _←{(fb fh0 fhn)←files ⋄ (fm fx fz ox)←copies
         chunksz←2*20
-        _←{s←⍵ ⋄ n←hz[s]
-            pos←chunksz×⍳⌈n÷chunksz ⋄ obj←⊃fb[hm[s]]
+        _←{row←⍵ ⋄ n←fz[row]
+            pos←chunksz×⍳⌈n÷chunksz ⋄ obj←⊃fb[fm[row]]
             _←{p←⍵ ⋄ k←chunksz⌊n-p ⋄ i←⍳k
-                out[lx[s]+p+i]←obj[hx[s]+p+i]
+                out[ox[row]+p+i]←obj[fx[row]+p+i]
             ⍬}¨pos
-        ⍬}¨lf
+        ⍬}¨⍳≢fz
     ⍬}⍬
 
     ⍝ Apply static relocations
-    _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r
+    _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r ⋄ (lx la ls lfz lmz le)←layout
         rr←⍸(0≠2|⌊hf[rh]÷2)∧ht[rh]≠8 ⋄ type←rt[rr] ⋄ kind←(kinds←1 2)⍳type
         ∨⌿kind=≢kinds:'Unsupported relocation type'⎕SIGNAL 200
         width←8 4[kind] ⋄ target←rh[rr] ⋄ offset←rx[rr]
         ∨⌿(offset>hz[target])∨width>hz[target]-offset:'Relocation target outside section'⎕SIGNAL 200
-        where←lx[target]+offset ⋄ S←ls[rs[rr]] ⋄ A←ra[rr] ⋄ P←base+where
+        where←lx[target]+offset ⋄ S←ls[rs[rr]] ⋄ A←ra[rr] ⋄ P←la[target]+offset
         value←S+A-P×kind=1 ⋄ pc32←kind=1
         ∨⌿pc32∧((value<¯1×2*31)∨value>¯1+2*31):'Relocation value overflow'⎕SIGNAL 200
 
@@ -224,7 +231,7 @@ LNK←{o←PS∆ARGS ⍵
     ⍬}⍬
 
     ⍝ Construct headers
-    header←{le base lfz lmz←⍵
+    header←{(lx la ls lfz lmz le)←layout
         ident←ELF∆IDENT∆EXP,7⍴0
         ehdr←,ident
         ehdr,←2 SB 2 62
@@ -235,7 +242,7 @@ LNK←{o←PS∆ARGS ⍵
         phdr←,4 SB 1 7 ⍝ PT_LOAD and PF_R | PF_W | PF_X
         phdr,←8 SB 0 base base lfz lmz 4096
         ehdr,phdr
-    }le base lfz lmz
+    }⍬
     out[⍳≢header]←header
 
     ⍝ Set expected file permissions
