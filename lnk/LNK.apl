@@ -65,34 +65,43 @@ LNK←{o←PS∆ARGS ⍵
     shstart←¯1↓+\0,e_shnum ⋄ shown←e_shnum/⍳≢e_shnum
     h←sh_name sh_type sh_flags shown sh_offset sh_size sh_addralign sh_entsize sh_link sh_info
 
-    ⍝ Symbols
-    sym_sh←⍸sh_type=2 ⋄ symcount←sh_size[sym_sh]÷24
-    ∨⌿24≠sh_entsize[sym_sh]:'Unexpected symbol entry size'⎕SIGNAL 200
-    ∨⌿0≠24|sh_size[sym_sh]:'Invalid symbol table size'⎕SIGNAL 200
-    symbytes←(sh_offset[sym_sh]+⍳¨sh_size[sym_sh])(⊂⍛⌷)¨objs[shown[sym_sh]]
-    symwords←(+/symcount)6⍴323⎕DR∊symbytes
-    (st_info st_other st_shndx)←(256 256 65536){⍺|⌊symwords[;1]÷⍵}¨1 256 65536
-    st_bind←⌊st_info÷16 ⋄ st_type←16|st_info
-    st_name←U32 symwords[;0] ⋄ (st_value st_size)←symwords∘U64¨2 4 ⋄ st_vis←4|st_other
-    und←st_shndx=0 ⋄ reg←(0<st_shndx)∧st_shndx<65280 ⋄ abs←st_shndx=65521
-    com←st_shndx=65522 ⋄ xnd←st_shndx=65535
-    ∨⌿xnd:'Extended symbol section indices are not supported yet'⎕SIGNAL 200
-    ∨⌿(st_shndx≥65280)∧~abs∨com∨xnd:'Unsupported reserve symbol section index'⎕SIGNAL 200
-    symstart←¯1↓+\0,symcount ⋄ symown←symcount/⍳≢symcount ⋄ symobj←shown[sym_sh[symown]]
-    symtabid←(≢sh_type)⍴¯1 ⋄ symtabid[sym_sh]←⍳≢sym_sh
-    st_sec←(≢st_name)⍴¯1 ⋄ st_sec[⍸abs]←¯2 ⋄ st_sec[⍸com]←¯3
-    rows←⍸reg ⋄ st_sec[rows]←shstart[symobj[rows]]+st_shndx[rows]
+    ⍝ Decode symbols
+    (s symbase)←{(hn ht hf hm hx hz ha he hl hi)←h
+        symsh←⍸ht=2 ⋄ count←hz[symsh]÷24
+        ∨⌿he[symsh]≠24:'Unexpected symbol entry size'⎕SIGNAL 200
+        ∨⌿0≠24|hz[symsh]:'Invalid symbol table size'⎕SIGNAL 200
 
-    ⍝ Symbols string table
-    symstr_sh←shstart[shown[sym_sh]]+sh_link[sym_sh]
-    ∨⌿shown[symstr_sh]≠shown[sym_sh]:'Symbol table links outisde its object'⎕SIGNAL 200
-    symstrbytes←(sh_offset[symstr_sh]+⍳¨sh_size[symstr_sh])(⊂⍛⌷)¨objs[shown[symstr_sh]]
-    strsize←≢¨symstrbytes ⋄ strstart←¯1↓+\0,strsize ⋄ strpool←∊symstrbytes
-    nameat←strstart[symown]+st_name
-    ∨⌿0≠strpool[strstart+strsize-1]:'Invalid symbol string table'⎕SIGNAL 200
-    zero←⍸strpool=0 ⋄ namelen←zero[(zero⍸nameat)+0≠strpool[nameat]]-nameat
-    names←{strpool[nameat[⍵]+⍳namelen[⍵]]}¨⍳≢st_name
-    s←names st_bind st_type st_vis st_sec st_value st_size
+        bytes←(hx[symsh]+⍳¨hz[symsh])(⊂⍛⌷)¨objs[hm[symsh]]
+        words←(+/count)6⍴323⎕DR∊bytes
+
+        (info other shndx)←(256 256 65536){⍺|⌊words[;1]÷⍵}¨1 256 65536
+        sb←⌊info÷16 ⋄ st←16|info ⋄ sn←U32 words[;0]
+        (sv sz)←words∘U64¨2 4 ⋄ so←4|other
+
+        reg←(0<shndx)∧shndx<65280
+        abs←shndx=65521 ⋄ com←shndx=65522 ⋄ xnd←shndx=65535
+        ∨⌿xnd:'Extended symbol section indices are not supported yet'⎕SIGNAL 200
+        ∨⌿(shndx≥65280)∧~abs∨com∨xnd:'Unsupported reserved symbol section index'⎕SIGNAL 200
+
+        start←¯1↓+\0,count ⋄ own←count/⍳≢count ⋄ obj←hm[symsh[own]]
+        symbase←(≢ht)⍴¯1 ⋄ symbase[symsh]←start
+
+        ⍝ Symbols string table
+        ss←(≢sn)⍴¯1 ⋄ ss[⍸abs]←¯2 ⋄ ss[⍸com]←¯3
+        ss[rows]←shstart[obj[rows]]+shndx[rows←⍸reg]
+        strsh←shstart[hm[symsh]]+hl[symsh]
+        ∨⌿hm[strsh]≠hm[symsh]:'Symbol table links outside its object'⎕SIGNAL 200
+        strbytes←(hx[strsh]+⍳¨hz[strsh])(⊂⍛⌷)¨objs[hm[strsh]]
+        strz←≢¨strbytes ⋄ strstart←¯1↓+\0,strz ⋄ strpool←∊strbytes
+        ⍝BREAK
+        nameat←strstart[own]+sn
+        ∨⌿0≠strpool[strstart+strz-1]:'Invalid symbol string table'⎕SIGNAL 200
+        zeros←⍸strpool=0 ⋄ namelen←zeros[(zeros⍸nameat)+0≠strpool[nameat]]-nameat
+        sn←{strpool[nameat[⍵]+⍳namelen[⍵]]}¨⍳≢sn
+
+        s←sn sb st so ss sv sz
+        s symbase
+    }⍬
 
     ⍝ RELA
     rela_sh←⍸sh_type=4 ⋄ relacount←sh_size[rela_sh]÷24
@@ -105,9 +114,9 @@ LNK←{o←PS∆ARGS ⍵
     relatargetsec←shstart[shown[rela_sh]]+sh_info[rela_sh]
     r_targetsec←relatargetsec[relaown]
     relasym_sh←shstart[shown[rela_sh]]+sh_link[rela_sh]
-    rela_symtab←symtabid[relasym_sh]
-    ∨⌿rela_symtab=¯1:'RELA does not reference a symbol table'⎕SIGNAL 200
-    r_symrow←symstart[rela_symtab[relaown]]+r_sym
+    relasymbase←symbase[relasym_sh]
+    ∨⌿relasymbase=¯1:'RELA does not reference a symbol table'⎕SIGNAL 200
+    r_symrow←relasymbase[relaown]+r_sym
     r←r_targetsec r_offset r_symrow r_type r_addend
 
     ⍝ Symbol resolution
