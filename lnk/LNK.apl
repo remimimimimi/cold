@@ -57,7 +57,7 @@ LNK←{o←PS∆ARGS ⍵
         ∨/64≠eshentsize:'Unexpected section-header entry size'⎕SIGNAL 200
 
         ⍝ Decode section headers
-        bytes←(eshoff+⍳¨64×eshnum)(⊂⍛⌷)¨fb ⋄ words←(+/eshnum)16⍴323⎕DR∊bytes
+        words←(+/eshnum)16⍴323⎕DR∊(eshoff+⍳¨64×eshnum)(⊂⍛⌷)¨fb
         (hn ht hl hi)←{U32 words[;⍵]}¨0 1 10 11
         (hf hx hz ha he)←words∘U64¨2 6 8 12 14
         fh0←¯1↓+\0,eshnum ⋄ hm←eshnum/⍳≢eshnum
@@ -77,8 +77,7 @@ LNK←{o←PS∆ARGS ⍵
             ∨/24≠he[symsh]:'Unexpected symbol entry size'⎕SIGNAL 200
             ∨/0≠24|symz:'Invalid symbol table size'⎕SIGNAL 200
 
-            bytes←(symx+⍳¨symz)(⊂⍛⌷)¨fb[symobj]
-            words←(+/count)6⍴323⎕DR∊bytes
+            words←(+/count)6⍴323⎕DR∊(symx+⍳¨symz)(⊂⍛⌷)¨fb[symobj]
 
             (info other shndx)←(256 256 65536){⍺|⌊words[;1]÷⍵}¨1 256 65536
             sb←⌊info÷16 ⋄ st←16|info ⋄ sn←U32 words[;0]
@@ -97,9 +96,8 @@ LNK←{o←PS∆ARGS ⍵
             ss[rows]←fh0[obj[rows]]+shndx[rows←⍸reg]
             strsh←fh0[symobj]+hl[symsh]
             ∨/hm[strsh]≠symobj:'Symbol table links outside its object'⎕SIGNAL 200
-            strx←hx[strsh] ⋄ strz←hz[strsh]
-            strbytes←(strx+⍳¨strz)(⊂⍛⌷)¨fb[symobj]
-            strstart←¯1↓+\0,strz ⋄ strpool←∊strbytes
+            strx←hx[strsh] ⋄ strz←hz[strsh] ⋄ strstart←¯1↓+\0,strz
+            strpool←∊(strx+⍳¨strz)(⊂⍛⌷)¨fb[symobj]
 
             nameat←strstart[own]+sn
             ∨/0≠strpool[strstart+strz-1]:'Invalid symbol string table'⎕SIGNAL 200
@@ -117,8 +115,7 @@ LNK←{o←PS∆ARGS ⍵
             ∨/24≠he[relash]:'Unexpected RELA entry size'⎕SIGNAL 200
             ∨/0≠24|relaz:'Unexpected RELA section size'⎕SIGNAL 200
 
-            bytes←(relax+⍳¨relaz)(⊂⍛⌷)¨fb[relaobj]
-            words←(+/count)6⍴323⎕DR∊bytes
+            words←(+/count)6⍴323⎕DR∊(relax+⍳¨relaz)(⊂⍛⌷)¨fb[relaobj]
 
             rx←words U64 0 ⋄ (rt rawsym)←{U32 words[;⍵]}¨2 3 ⋄ ra←words S64 4
             own←count/⍳≢count ⋄ rh←(fh0[relaobj]+hi[relash])[own]
@@ -138,7 +135,7 @@ LNK←{o←PS∆ARGS ⍵
         reg←ss≥0 ⋄ abs←ss=¯2 ⋄ com←ss=¯3
         weak←sb=2 ⋄ strong←(sb=1)∨sb=10 ⋄ ext←strong∨weak
         defd←reg∨abs∨com
-        ∨/~≠sn[⍸strong∧defd∧~com]:'Multiple strong symbol definitions'⎕SIGNAL 200
+        ∨/~≠(strong∧defd∧~com)/sn:'Multiple strong symbol definitions'⎕SIGNAL 200
 
         def←⍸ext∧defd ⋄ def←def[⍋com[def]+2×weak[def]] ⋄ def←(≠sn[def])/def
         defnames←sn[def] ⋄ find←defnames∘⍳
