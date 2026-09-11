@@ -207,7 +207,8 @@ LNK←{o←PS∆ARGS ⍵
                 bytes←⊖(w⍴256)⊤value[sel]
                 out[(⍳w)∘.+where[sel]]←bytes-256×bytes≥128
             ⍬}¨⍳⌈count÷span
-        ⍬}¨∪width ⋄ ⍬}⍬
+        ⍬}¨∪width
+    ⍬}⍬
 
     ⍝ Construct headers
     header←{le base lfz lmz←⍵
