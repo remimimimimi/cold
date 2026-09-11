@@ -80,7 +80,8 @@ LNK←{o←PS∆ARGS ⍵
     ∨⌿(st_shndx≥65280)∧~abs∨com∨xnd:'Unsupported reserve symbol section index'⎕SIGNAL 200
     symstart←¯1↓+\0,symcount ⋄ symown←symcount/⍳≢symcount ⋄ symobj←shown[sym_sh[symown]]
     symtabid←(≢sh_type)⍴¯1 ⋄ symtabid[sym_sh]←⍳≢sym_sh
-    st_sec←(≢st_name)⍴¯1 ⋄ rows←⍸reg ⋄ st_sec[rows]←shstart[symobj[rows]]+st_shndx[rows]
+    st_sec←(≢st_name)⍴¯1 ⋄ st_sec[⍸abs]←¯2 ⋄ st_sec[⍸com]←¯3
+    rows←⍸reg ⋄ st_sec[rows]←shstart[symobj[rows]]+st_shndx[rows]
 
     ⍝ Symbols string table
     symstr_sh←shstart[shown[sym_sh]]+sh_link[sym_sh]
