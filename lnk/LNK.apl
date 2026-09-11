@@ -113,7 +113,7 @@ LNK←{o←PS∆ARGS ⍵
     ⍝ Symbol resolution
     (r common startsym zero)←{(s r)←⍵ ⋄ (sn sb st so ss sv sz)←s ⋄ (rh rx rs rt ra)←r
         reg←ss≥0 ⋄ abs←ss=¯2 ⋄ com←ss=¯3
-        weak←st_bind=2 ⋄ strong←st_bind∊1 10 ⋄ ext←strong∨weak
+        weak←sb=2 ⋄ strong←sb∊1 10 ⋄ ext←strong∨weak
         defd←reg∨abs∨com
         ∨⌿~≠sn[⍸strong∧defd∧~com]:'Multiple strong symbol definitions'⎕SIGNAL 200
 
@@ -125,7 +125,7 @@ LNK←{o←PS∆ARGS ⍵
         ∨⌿missing∧required:'Undefined symbol'⎕SIGNAL 200
 
         zero←≢sn ⋄ rdef[rows]←(def,zero)[hit] ⋄ real←rdef≠zero
-        ∨⌿(usedtype←st_type[real/rdef])=6:'TLS symbol relocation is not supported yet'⎕SIGNAL 200
+        ∨⌿(usedtype←st[real/rdef])=6:'TLS symbol relocation is not supported yet'⎕SIGNAL 200
         ∨⌿usedtype=10:'GNU IFUNC relocation is not supported yet'⎕SIGNAL 200
 
         ⍝ Identify entry point
@@ -135,9 +135,9 @@ LNK←{o←PS∆ARGS ⍵
 
         ⍝ Common symbols
         cdef←def/⍨com[def] ⋄ crow←⍸ext∧com
-        cid←names[cdef]∘⍳names[crow] ⋄ cid←(keep←cid<≢cdef)/cid ⋄ crow←keep/crow
+        cid←sn[cdef]∘⍳sn[crow] ⋄ cid←(keep←cid<≢cdef)/cid ⋄ crow←keep/crow
         cz←(≢cdef)⍴0 ⋄ ca←(≢cdef)⍴1 ⋄ ids←∪cid
-        cz[ids]←cid{⌈/⍵}⌸sz[crow] ⋄ ca[ids]←cid{⌈/⍵}⌸sn[crow]
+        cz[ids]←cid{⌈/⍵}⌸sz[crow] ⋄ ca[ids]←cid{⌈/⍵}⌸sv[crow]
 
         r←rh rx rdef rt ra ⋄ common←cdef cz ca
         r common startsym zero
