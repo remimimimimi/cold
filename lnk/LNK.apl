@@ -29,7 +29,7 @@ LAYOUT←{group size align←⍵ ⋄ ⍺←0 ⍝ optional origin
     a[0,1+⍸2≠/g]←g{⌈/⍵}⌸a
     x←⍺+0,¯1↓+\s ⋄ M←⌈/a
     F←{⍺≥M:⍵ ⋄ m←a>⍺ ⋄ v←2|⌊(m/⍵)÷⍺ ⋄ (2×⍺)∇⍵+⍺×+\m\2≠/0,v}
-    x←1 F x ⋄ z←n⍴0 ⋄ z[p]←x
+    x←1 F x ⋄ z←x@p⊢n⍴0
     p z(⊃⌽x+s)}
 
 OUT∆INIT←{size←⍺ ⋄ file←⍵
@@ -45,20 +45,21 @@ LNK←{o←PS∆ARGS ⍵
 
     ⍝ Decode input files and sections
     (files h)←{paths←∪o.input ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
-        headerbytes←{16↓64↑⍵}¨fb
         ∨⌿ELF∆IDENT∆EXP∘≢¨9∘↑¨fb:'Unexpected ELF file identification'⎕SIGNAL 200
 
-        (etype emachine)←↓⍉↑163∘⎕DR¨4∘↑¨headerbytes
+        words←(≢fb)16⍴323⎕DR∊64∘↑¨fb ⋄ meta←U32 words[;4]
+        etype←65536|meta ⋄ emachine←⌊meta÷65536
         ∨⌿1∘≢¨etype:'One of the input files is not an object file'⎕SIGNAL 200
         ∨⌿62∘≢¨emachine:'One of the input files is not for AMD64'⎕SIGNAL 200
 
-        (_ _ eshoff)←↓⍉↑({256⊥⌽256|⍵}⍤1)(≢fb)3 8⍴↑{24↓48↑⍵}¨fb
-        (_ _ _ eshentsize eshnum _)←↓⍉↑({256⊥⌽256|⍵}⍤1)(≢fb)6 2⍴↑{¯12↑64↑⍵}¨fb
+        eshoff←words U64 10 ⋄ eshentsize←⌊(U32 words[;14])÷65536
+        eshnum←65536|U32 words[;15]
         ∨⌿64≠eshentsize:'Unexpected section-header entry size'⎕SIGNAL 200
 
         ⍝ Decode section headers
         bytes←(eshoff+⍳¨64×eshnum)(⊂⍛⌷)¨fb ⋄ words←(+/eshnum)16⍴323⎕DR∊bytes
-        (hn ht hl hi)←↓⍉U32⍤0⊢words[;0 1 10 11] ⋄ (hf hx hz ha he)←words∘U64¨2 6 8 12 14
+        (hn ht hl hi)←{U32 words[;⍵]}¨0 1 10 11
+        (hf hx hz ha he)←words∘U64¨2 6 8 12 14
         fh0←¯1↓+\0,eshnum ⋄ hm←eshnum/⍳≢eshnum
 
         ⍝ mapped bytes, section start, section count
@@ -88,7 +89,7 @@ LNK←{o←PS∆ARGS ⍵
             ∨⌿(shndx≥65280)∧~abs∨com∨xnd:'Unsupported reserved symbol section index'⎕SIGNAL 200
 
             start←¯1↓+\0,count ⋄ own←count/⍳≢count ⋄ obj←hm[symsh[own]]
-            symbase←(≢ht)⍴¯1 ⋄ symbase[symsh]←start
+            symbase←start@symsh⊢(≢ht)⍴¯1
 
             ⍝ Symbols string table
             ss←(≢sn)⍴¯1 ⋄ ss[⍸abs]←¯2 ⋄ ss[⍸com]←¯3
@@ -116,7 +117,7 @@ LNK←{o←PS∆ARGS ⍵
             bytes←(hx[relash]+⍳¨hz[relash])(⊂⍛⌷)¨fb[hm[relash]]
             words←(+/count)6⍴323⎕DR∊bytes
 
-            rx←words U64 0 ⋄ (rt rawsym)←↓⍉U32⍤0⊢words[;2 3] ⋄ ra←words S64 4
+            rx←words U64 0 ⋄ (rt rawsym)←{U32 words[;⍵]}¨2 3 ⋄ ra←words S64 4
             own←count/⍳≢count ⋄ rh←(fh0[hm[relash]]+hi[relash])[own]
 
             symsh←fh0[hm[relash]]+hl[relash] ⋄ base←symbase[symsh]
@@ -184,8 +185,8 @@ LNK←{o←PS∆ARGS ⍵
 
         copies←(file/hm[secs])(file/hx[secs])(file/secz)(file/secrel)
 
-        shoff←(≢ht)⍴¯1 ⋄ shaddr←(≢ht)⍴0
-        shoff[filesec]←file/secrel ⋄ shaddr[secs]←base+secrel
+        shoff←(file/secrel)@filesec⊢(≢ht)⍴¯1
+        shaddr←(base+secrel)@secs⊢(≢ht)⍴0
         filesz←⌈/hdrsz,(file/secrel)+file/secz
 
         reg←ss≥0 ⋄ abs←ss=¯2
