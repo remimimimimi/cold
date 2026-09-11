@@ -46,7 +46,6 @@ LNK←{o←PS∆ARGS ⍵
     ⍝ Open files
     paths←∪o.input
     objs←{83 ¯1 ⎕MAP ⍵ 'R'}¨paths
-    ⍝ objs←objs,objs
 
     ⍝ ELF header
     headerbytes←{16↓64↑⍵}¨objs
