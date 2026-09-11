@@ -134,7 +134,9 @@ Run←{
   ⍝ Report
     Print←{
         1=1⊃⍵:⎕←'PASS ',0⊃⍵
-        ⎕←'FAIL ',(0⊃⍵),' - ',2⊃⍵}
+        errlines←2⊃⍵ ⋄ errty←⊃errlines ⋄ errdesc←1↓errlines
+        ⎕←'FAIL ',(0⊃⍵),': ',errty
+        ⍞←∊{'  ',⍵,⎕UCS 10}¨errdesc}
     _←Print¨results
     failures←+/~1⊃¨results
     ⎕←(⍕≢results),' tests: ',(⍕(≢results)-failures),' passed, ',(⍕failures),' failed'
