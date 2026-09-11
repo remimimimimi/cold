@@ -18,7 +18,7 @@ PS∆ARGS←{args←⍵
 
     o.(path lib)←'-L' '-l'{m←⍺∘≡¨(≢⍺)↑¨⍵ ⋄ (≢⍺)↓¨m/⍵}¨⊂args
     o.(interp out root hashstyle buildid dependencyfile){
-        m←⍵∘≡¨(≢⍵)↑¨args ⋄ v←(≢⍵)↓¨m/args ⋄ ⊃¯1↑(⊂⍺),v
+        m←⍵∘≡¨(≢⍵)↑¨args ⋄ v←(≢⍵)↓¨m/args ⋄ ⊃⌽(⊂⍺),v
     }←'-dynamic-linker' '-o' '--sysroot=' '--hash-style=' '--build-id=' '--dependency-file='
     o.(static pie)←'-static' '-pie'∊args
     o.input←args/⍨'-'≠⊃¨args ⋄ o}
@@ -41,20 +41,20 @@ OUT∆INIT←{size←⍺ ⋄ file←⍵
 ELF∆IDENT∆EXP←127 69 76 70 2 1 1 0 0
 
 LNK←{o←PS∆ARGS ⍵
-    0≡≢o.input: 'Expected at least one input file to link'⎕SIGNAL 200
+    0=≢o.input: 'Expected at least one input file to link'⎕SIGNAL 200
 
     ⍝ Decode input files and sections
     (files h)←{paths←∪o.input ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
-        ∨⌿ELF∆IDENT∆EXP∘≢¨9∘↑¨fb:'Unexpected ELF file identification'⎕SIGNAL 200
+        ∨/ELF∆IDENT∆EXP∘≢¨9∘↑¨fb:'Unexpected ELF file identification'⎕SIGNAL 200
 
         words←(≢fb)16⍴323⎕DR∊64∘↑¨fb ⋄ meta←U32 words[;4]
         etype←65536|meta ⋄ emachine←⌊meta÷65536
-        ∨⌿1∘≢¨etype:'One of the input files is not an object file'⎕SIGNAL 200
-        ∨⌿62∘≢¨emachine:'One of the input files is not for AMD64'⎕SIGNAL 200
+        ∨/1≠etype:'One of the input files is not an object file'⎕SIGNAL 200
+        ∨/62≠emachine:'One of the input files is not for AMD64'⎕SIGNAL 200
 
         eshoff←words U64 10 ⋄ eshentsize←⌊(U32 words[;14])÷65536
         eshnum←65536|U32 words[;15]
-        ∨⌿64≠eshentsize:'Unexpected section-header entry size'⎕SIGNAL 200
+        ∨/64≠eshentsize:'Unexpected section-header entry size'⎕SIGNAL 200
 
         ⍝ Decode section headers
         bytes←(eshoff+⍳¨64×eshnum)(⊂⍛⌷)¨fb ⋄ words←(+/eshnum)16⍴323⎕DR∊bytes
@@ -64,7 +64,7 @@ LNK←{o←PS∆ARGS ⍵
 
         ⍝ mapped bytes, section start, section count
         files←fb fh0 eshnum
-        ⍝ name, type, flags, file, file offset, size, ailgn, entry size, link, info
+        ⍝ name, type, flags, file, file offset, size, align, entry size, link, info
         h←hn ht hf hm hx hz ha he hl hi
         files h
     }⍬
@@ -72,11 +72,12 @@ LNK←{o←PS∆ARGS ⍵
     (s r)←{
         ⍝ Decode symbols
         (s symbase)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb fh0 fhn)←files
-            symsh←⍸ht=2 ⋄ count←hz[symsh]÷24
-            ∨⌿he[symsh]≠24:'Unexpected symbol entry size'⎕SIGNAL 200
-            ∨⌿0≠24|hz[symsh]:'Invalid symbol table size'⎕SIGNAL 200
+            symsh←⍸ht=2 ⋄ symobj←hm[symsh] ⋄ symx←hx[symsh] ⋄ symz←hz[symsh]
+            count←symz÷24
+            ∨/24≠he[symsh]:'Unexpected symbol entry size'⎕SIGNAL 200
+            ∨/0≠24|symz:'Invalid symbol table size'⎕SIGNAL 200
 
-            bytes←(hx[symsh]+⍳¨hz[symsh])(⊂⍛⌷)¨fb[hm[symsh]]
+            bytes←(symx+⍳¨symz)(⊂⍛⌷)¨fb[symobj]
             words←(+/count)6⍴323⎕DR∊bytes
 
             (info other shndx)←(256 256 65536){⍺|⌊words[;1]÷⍵}¨1 256 65536
@@ -85,22 +86,23 @@ LNK←{o←PS∆ARGS ⍵
 
             reg←(0<shndx)∧shndx<65280
             abs←shndx=65521 ⋄ com←shndx=65522 ⋄ xnd←shndx=65535
-            ∨⌿xnd:'Extended symbol section indices are not supported yet'⎕SIGNAL 200
-            ∨⌿(shndx≥65280)∧~abs∨com∨xnd:'Unsupported reserved symbol section index'⎕SIGNAL 200
+            ∨/xnd:'Extended symbol section indices are not supported yet'⎕SIGNAL 200
+            ∨/(shndx≥65280)∧~abs∨com∨xnd:'Unsupported reserved symbol section index'⎕SIGNAL 200
 
-            start←¯1↓+\0,count ⋄ own←count/⍳≢count ⋄ obj←hm[symsh[own]]
+            start←¯1↓+\0,count ⋄ own←count/⍳≢count ⋄ obj←symobj[own]
             symbase←start@symsh⊢(≢ht)⍴¯1
 
             ⍝ Symbols string table
             ss←(≢sn)⍴¯1 ⋄ ss[⍸abs]←¯2 ⋄ ss[⍸com]←¯3
             ss[rows]←fh0[obj[rows]]+shndx[rows←⍸reg]
-            strsh←fh0[hm[symsh]]+hl[symsh]
-            ∨⌿hm[strsh]≠hm[symsh]:'Symbol table links outside its object'⎕SIGNAL 200
-            strbytes←(hx[strsh]+⍳¨hz[strsh])(⊂⍛⌷)¨fb[hm[strsh]]
-            strz←≢¨strbytes ⋄ strstart←¯1↓+\0,strz ⋄ strpool←∊strbytes
-            ⍝BREAK
+            strsh←fh0[symobj]+hl[symsh]
+            ∨/hm[strsh]≠symobj:'Symbol table links outside its object'⎕SIGNAL 200
+            strx←hx[strsh] ⋄ strz←hz[strsh]
+            strbytes←(strx+⍳¨strz)(⊂⍛⌷)¨fb[symobj]
+            strstart←¯1↓+\0,strz ⋄ strpool←∊strbytes
+
             nameat←strstart[own]+sn
-            ∨⌿0≠strpool[strstart+strz-1]:'Invalid symbol string table'⎕SIGNAL 200
+            ∨/0≠strpool[strstart+strz-1]:'Invalid symbol string table'⎕SIGNAL 200
             zeros←⍸strpool=0 ⋄ namelen←zeros[(zeros⍸nameat)+0≠strpool[nameat]]-nameat
             sn←{strpool[nameat[⍵]+⍳namelen[⍵]]}¨⍳≢sn
 
@@ -110,18 +112,19 @@ LNK←{o←PS∆ARGS ⍵
 
         ⍝ Decode RELA
         r←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb fh0 fhn)←files
-            relash←⍸ht=4 ⋄ count←hz[relash]÷24
-            ∨⌿he[relash]≠24:'Unexpected RELA entry size'⎕SIGNAL 200
-            ∨⌿0≠24|hz[relash]:'Unexpected RELA section size'⎕SIGNAL 200
+            relash←⍸ht=4 ⋄ relaobj←hm[relash] ⋄ relax←hx[relash] ⋄ relaz←hz[relash]
+            count←relaz÷24
+            ∨/24≠he[relash]:'Unexpected RELA entry size'⎕SIGNAL 200
+            ∨/0≠24|relaz:'Unexpected RELA section size'⎕SIGNAL 200
 
-            bytes←(hx[relash]+⍳¨hz[relash])(⊂⍛⌷)¨fb[hm[relash]]
+            bytes←(relax+⍳¨relaz)(⊂⍛⌷)¨fb[relaobj]
             words←(+/count)6⍴323⎕DR∊bytes
 
             rx←words U64 0 ⋄ (rt rawsym)←{U32 words[;⍵]}¨2 3 ⋄ ra←words S64 4
-            own←count/⍳≢count ⋄ rh←(fh0[hm[relash]]+hi[relash])[own]
+            own←count/⍳≢count ⋄ rh←(fh0[relaobj]+hi[relash])[own]
 
-            symsh←fh0[hm[relash]]+hl[relash] ⋄ base←symbase[symsh]
-            ∨⌿base=¯1:'RELA does not reference a symbol table'⎕SIGNAL 200
+            symsh←fh0[relaobj]+hl[relash] ⋄ base←symbase[symsh]
+            ∨/¯1=base:'RELA does not reference a symbol table'⎕SIGNAL 200
             rs←base[own]+rawsym
 
             rh rx rs rt ra
@@ -133,20 +136,20 @@ LNK←{o←PS∆ARGS ⍵
     ⍝ Symbol resolution
     (r common startsym)←{(s r)←⍵ ⋄ (sn sb st so ss sv sz)←s ⋄ (rh rx rs rt ra)←r
         reg←ss≥0 ⋄ abs←ss=¯2 ⋄ com←ss=¯3
-        weak←sb=2 ⋄ strong←sb∊1 10 ⋄ ext←strong∨weak
+        weak←sb=2 ⋄ strong←(sb=1)∨sb=10 ⋄ ext←strong∨weak
         defd←reg∨abs∨com
-        ∨⌿~≠sn[⍸strong∧defd∧~com]:'Multiple strong symbol definitions'⎕SIGNAL 200
+        ∨/~≠sn[⍸strong∧defd∧~com]:'Multiple strong symbol definitions'⎕SIGNAL 200
 
         def←⍸ext∧defd ⋄ def←def[⍋com[def]+2×weak[def]] ⋄ def←(≠sn[def])/def
         defnames←sn[def] ⋄ find←defnames∘⍳
 
-        rdef←rs ⋄ rows←⍸ext[rdef] ⋄ hit←find sn[rdef[rows]]
-        missing←hit=≢def ⋄ required←(~weak[rdef[rows]])∨0≠so[rdef[rows]]
-        ∨⌿missing∧required:'Undefined symbol'⎕SIGNAL 200
+        rdef←rs ⋄ rows←⍸ext[rdef] ⋄ refs←rdef[rows] ⋄ hit←find sn[refs]
+        missing←hit=≢def ⋄ required←(~weak[refs])∨0≠so[refs]
+        ∨/missing∧required:'Undefined symbol'⎕SIGNAL 200
 
         zero←≢sn ⋄ rdef[rows]←(def,zero)[hit] ⋄ real←rdef≠zero
-        ∨⌿(usedtype←st[real/rdef])=6:'TLS symbol relocation is not supported yet'⎕SIGNAL 200
-        ∨⌿usedtype=10:'GNU IFUNC relocation is not supported yet'⎕SIGNAL 200
+        ∨/(usedtype←st[real/rdef])=6:'TLS symbol relocation is not supported yet'⎕SIGNAL 200
+        ∨/usedtype=10:'GNU IFUNC relocation is not supported yet'⎕SIGNAL 200
 
         ⍝ Identify entry point
         start←⊃find⊂83⎕DR'_start'
@@ -167,12 +170,12 @@ LNK←{o←PS∆ARGS ⍵
     base←4194304
     (layout copies)←{(h s common startsym)←⍵
         (hn ht hf hm hx hz ha he hl hi)←h ⋄ (sn sb st so ss sv sz)←s ⋄ (cs cz ca)←common
-        alloc←0≠2|⌊hf÷2 ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
+        alloc←2|⌊hf÷2 ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
         secz←hz[secs] ⋄ seca←1⌈ha[secs]
 
         write←2|flags ⋄ exec←2|⌊flags÷4
-        ∨⌿write∧exec:'Writable executable sections are not supported'⎕SIGNAL 200
-        ∨⌿~seca∊2*⍳63:'Unsupported section alignment'⎕SIGNAL 200
+        ∨/write∧exec:'Writable executable sections are not supported'⎕SIGNAL 200
+        ∨/~seca∊2*⍳63:'Unsupported section alignment'⎕SIGNAL 200
 
         nobits←type=8 ⋄ group←((~exec)+write)+3×nobits ⋄ nsec←≢secs
         group,←(≢cs)⍴5 ⋄ size←secz,cz ⋄ align←seca,ca
@@ -182,12 +185,13 @@ LNK←{o←PS∆ARGS ⍵
         secrel←nsec↑rel ⋄ comrel←nsec↓rel
 
         file←~nobits ⋄ filesec←file/secs
+        foff←file/secrel ⋄ fsz←hz[filesec]
 
-        copies←(file/hm[secs])(file/hx[secs])(file/secz)(file/secrel)
+        copies←(hm[filesec])(hx[filesec])fsz foff
 
-        shoff←(file/secrel)@filesec⊢(≢ht)⍴¯1
+        shoff←foff@filesec⊢(≢ht)⍴¯1
         shaddr←(base+secrel)@secs⊢(≢ht)⍴0
-        filesz←⌈/hdrsz,(file/secrel)+file/secz
+        filesz←⌈/hdrsz,foff+fsz
 
         reg←ss≥0 ⋄ abs←ss=¯2
         symaddr←reg\(shaddr[reg/ss]+reg/sv) ⋄ symaddr[⍸abs]←abs/sv
@@ -213,13 +217,14 @@ LNK←{o←PS∆ARGS ⍵
 
     ⍝ Apply static relocations
     _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r ⋄ (lx la ls lfz lmz le)←layout
-        rr←⍸(0≠2|⌊hf[rh]÷2)∧ht[rh]≠8 ⋄ type←rt[rr] ⋄ kind←(kinds←1 2)⍳type
-        ∨⌿kind=≢kinds:'Unsupported relocation type'⎕SIGNAL 200
-        width←8 4[kind] ⋄ target←rh[rr] ⋄ offset←rx[rr]
-        ∨⌿(offset>hz[target])∨width>hz[target]-offset:'Relocation target outside section'⎕SIGNAL 200
+        rr←⍸(2|⌊hf[rh]÷2)∧ht[rh]≠8 ⋄ type←rt[rr]
+        ∨/(type≠1)∧type≠2:'Unsupported relocation type'⎕SIGNAL 200
+        kind←type-1
+        width←8 4[kind] ⋄ target←rh[rr] ⋄ offset←rx[rr] ⋄ targetz←hz[target]
+        ∨/(offset>targetz)∨width>targetz-offset:'Relocation target outside section'⎕SIGNAL 200
         where←lx[target]+offset ⋄ S←ls[rs[rr]] ⋄ A←ra[rr] ⋄ P←la[target]+offset
-        value←S+A-P×kind=1 ⋄ pc32←kind=1
-        ∨⌿pc32∧((value<¯1×2*31)∨value>¯1+2*31):'Relocation value overflow'⎕SIGNAL 200
+        value←S+A-P×pc32←kind=1
+        ∨/pc32∧((value<¯1×2*31)∨value>¯1+2*31):'Relocation value overflow'⎕SIGNAL 200
 
         batchbytes←2*20 ⍝ avoid large allocation for temporary arrays.
         _←{w←⍵
