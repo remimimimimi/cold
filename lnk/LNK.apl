@@ -122,7 +122,6 @@ LNK←{o←PS∆ARGS ⍵
     ∨⌿(usedtype←st_type[real/r_def])=6:'TLS symbol relocation is not supported yet'⎕SIGNAL 200
     ∨⌿usedtype=10:'GNU IFUNC relocation is not supported yet'⎕SIGNAL 200
 
-
     ⍝ Identify entry point
     start←⊃find⊂83⎕DR'_start'
     start=≢defnames:'Undefined symbol: _start'⎕SIGNAL 200
