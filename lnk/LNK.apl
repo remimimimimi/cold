@@ -47,7 +47,7 @@ LNK←{o←PS∆ARGS ⍵
     paths←∪o.input
     objs←{83 ¯1 ⎕MAP ⍵ 'R'}¨paths
 
-    ⍝ ELF header
+    ⍝ Decode ELF header
     headerbytes←{16↓64↑⍵}¨objs
     ∨⌿ELF∆IDENT∆EXP∘≢¨9∘↑¨objs:'Unexpected ELF file identification'⎕SIGNAl 200
     (e_type e_machine)←↓⍉↑163∘⎕DR¨4∘↑¨headerbytes
@@ -57,7 +57,7 @@ LNK←{o←PS∆ARGS ⍵
     (_ _ _ e_shentsize e_shnum e_shstrndx)←↓⍉↑({256⊥⌽256|⍵}⍤1)(≢objs)6 2⍴↑{¯12↑64↑⍵}¨objs
     ∨⌿64≠e_shentsize:'Unexpected section-header entry size'⎕SIGNAL 200
 
-    ⍝ Sections headers
+    ⍝ Decode sections headers
     shtbytes←(e_shoff+⍳¨64×e_shnum)(⊂⍛⌷)¨objs
     shtwords←(+/e_shnum)16⍴323⎕DR∊shtbytes
     (sh_name sh_type sh_link sh_info)←↓⍉U32⍤0⊢shtwords[;0 1 10 11]
@@ -103,7 +103,7 @@ LNK←{o←PS∆ARGS ⍵
         s symbase
     }⍬
 
-    ⍝ RELA
+    ⍝ Decode RELA
     rela_sh←⍸sh_type=4 ⋄ relacount←sh_size[rela_sh]÷24
     ∨⌿24≠sh_entsize[rela_sh]:'Unexpected RELA entry size'⎕SIGNAL 200
     ∨⌿0≠24|sh_size[rela_sh]:'Unexpected RELA section size'⎕SIGNAL 200
