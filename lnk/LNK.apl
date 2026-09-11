@@ -181,17 +181,19 @@ LNK←{o←PS∆ARGS ⍵
     ⍬}¨∪width
 
     ⍝ Construct headers
-    ident←ELF∆IDENT∆EXP,7⍴0
-    ehdr←,ident
-    ehdr,←2 SB 2 62
-    ehdr,←4 SB 1
-    ehdr,←8 SB entry 64 0
-    ehdr,←4 SB 0
-    ehdr,←2 SB 64 56 1 0 0 0
-    phdr←,4 SB 1 7 ⍝ PT_LOAD and PF_R | PF_W | PF_X
-    phdr,←8 SB 0 base base filesz memsz 4096
-    out[⍳64]←ehdr
-    out[64+⍳56]←phdr
+    header←{entry base filesz memsz←⍵
+        ident←ELF∆IDENT∆EXP,7⍴0
+        ehdr←,ident
+        ehdr,←2 SB 2 62
+        ehdr,←4 SB 1
+        ehdr,←8 SB entry 64 0
+        ehdr,←4 SB 0
+        ehdr,←2 SB 64 56 1 0 0 0
+        phdr←,4 SB 1 7 ⍝ PT_LOAD and PF_R | PF_W | PF_X
+        phdr,←8 SB 0 base base filesz memsz 4096
+        ehdr,phdr
+    }entry base filesz memsz
+    out[⍳≢header]←header
 
     ⍝ Set expected file permissions
     chmod←⎕SHELL 'chmod' '+x' '--' o.out
