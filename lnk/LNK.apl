@@ -157,7 +157,6 @@ LNK←{o←PS∆ARGS ⍵
         r←rh rx rdef rt ra ⋄ common←cdef cz ca
         r common startsym zero
     }s r
-    (cdef commonsize commonalign)←common
 
     ⍝ Layout
     base←4194304
