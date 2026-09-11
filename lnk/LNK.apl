@@ -43,35 +43,38 @@ ELF∆IDENT∆EXP←127 69 76 70 2 1 1 0 0
 LNK←{o←PS∆ARGS ⍵
     0≡≢o.input: 'Expected at least one input file to link'⎕SIGNAL 200
 
-    ⍝ Open files
-    paths←∪o.input
-    objs←{83 ¯1 ⎕MAP ⍵ 'R'}¨paths
+    ⍝ Decode input files and sections
+    (files h)←{paths←∪o.input ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
+        headerbytes←{16↓64↑⍵}¨fb
+        ∨⌿ELF∆IDENT∆EXP∘≢¨9∘↑¨fb:'Unexpected ELF file identification'⎕SIGNAL 200
 
-    ⍝ Decode ELF header
-    headerbytes←{16↓64↑⍵}¨objs
-    ∨⌿ELF∆IDENT∆EXP∘≢¨9∘↑¨objs:'Unexpected ELF file identification'⎕SIGNAl 200
-    (e_type e_machine)←↓⍉↑163∘⎕DR¨4∘↑¨headerbytes
-    ∨⌿1∘≢¨e_type:'One of the input files is not an object file'⎕SIGNAL 200
-    ∨⌿62∘≢¨e_machine:'One of the input files is not for AMD64'⎕SIGNAL 200
-    (_ _ e_shoff)←↓⍉↑({256⊥⌽256|⍵}⍤1)(≢objs)3 8⍴↑{24↓48↑⍵}¨objs
-    (_ _ _ e_shentsize e_shnum e_shstrndx)←↓⍉↑({256⊥⌽256|⍵}⍤1)(≢objs)6 2⍴↑{¯12↑64↑⍵}¨objs
-    ∨⌿64≠e_shentsize:'Unexpected section-header entry size'⎕SIGNAL 200
+        (etype emachine)←↓⍉↑163∘⎕DR¨4∘↑¨headerbytes
+        ∨⌿1∘≢¨etype:'One of the input files is not an object file'⎕SIGNAL 200
+        ∨⌿62∘≢¨emachine:'One of the input files is not for AMD64'⎕SIGNAL 200
 
-    ⍝ Decode sections headers
-    shtbytes←(e_shoff+⍳¨64×e_shnum)(⊂⍛⌷)¨objs
-    shtwords←(+/e_shnum)16⍴323⎕DR∊shtbytes
-    (sh_name sh_type sh_link sh_info)←↓⍉U32⍤0⊢shtwords[;0 1 10 11]
-    (sh_flags sh_offset sh_size sh_addralign sh_entsize)←shtwords∘U64¨2 6 8 12 14
-    shstart←¯1↓+\0,e_shnum ⋄ shown←e_shnum/⍳≢e_shnum
-    h←sh_name sh_type sh_flags shown sh_offset sh_size sh_addralign sh_entsize sh_link sh_info
+        (_ _ eshoff)←↓⍉↑({256⊥⌽256|⍵}⍤1)(≢fb)3 8⍴↑{24↓48↑⍵}¨fb
+        (_ _ _ eshentsize eshnum _)←↓⍉↑({256⊥⌽256|⍵}⍤1)(≢fb)6 2⍴↑{¯12↑64↑⍵}¨fb
+        ∨⌿64≠eshentsize:'Unexpected section-header entry size'⎕SIGNAL 200
+
+        ⍝ Decode section headers
+        bytes←(eshoff+⍳¨64×eshnum)(⊂⍛⌷)¨fb ⋄ words←(+/eshnum)16⍴323⎕DR∊bytes
+        (hn ht hl hi)←↓⍉U32⍤0⊢words[;0 1 10 11] ⋄ (hf hx hz ha he)←words∘U64¨2 6 8 12 14
+        fh0←¯1↓+\0,eshnum ⋄ hm←eshnum/⍳≢eshnum
+
+        ⍝ mapped bytes, section start, section count
+        files←fb fh0 eshnum
+        ⍝ name, type, flags, file, file offset, size, ailgn, entry size, link, info
+        h←hn ht hf hm hx hz ha he hl hi
+        files h
+    }⍬
 
     ⍝ Decode symbols
-    (s symbase)←{(hn ht hf hm hx hz ha he hl hi)←h
+    (s symbase)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb fh0 fhn)←files
         symsh←⍸ht=2 ⋄ count←hz[symsh]÷24
         ∨⌿he[symsh]≠24:'Unexpected symbol entry size'⎕SIGNAL 200
         ∨⌿0≠24|hz[symsh]:'Invalid symbol table size'⎕SIGNAL 200
 
-        bytes←(hx[symsh]+⍳¨hz[symsh])(⊂⍛⌷)¨objs[hm[symsh]]
+        bytes←(hx[symsh]+⍳¨hz[symsh])(⊂⍛⌷)¨fb[hm[symsh]]
         words←(+/count)6⍴323⎕DR∊bytes
 
         (info other shndx)←(256 256 65536){⍺|⌊words[;1]÷⍵}¨1 256 65536
@@ -88,10 +91,10 @@ LNK←{o←PS∆ARGS ⍵
 
         ⍝ Symbols string table
         ss←(≢sn)⍴¯1 ⋄ ss[⍸abs]←¯2 ⋄ ss[⍸com]←¯3
-        ss[rows]←shstart[obj[rows]]+shndx[rows←⍸reg]
-        strsh←shstart[hm[symsh]]+hl[symsh]
+        ss[rows]←fh0[obj[rows]]+shndx[rows←⍸reg]
+        strsh←fh0[hm[symsh]]+hl[symsh]
         ∨⌿hm[strsh]≠hm[symsh]:'Symbol table links outside its object'⎕SIGNAL 200
-        strbytes←(hx[strsh]+⍳¨hz[strsh])(⊂⍛⌷)¨objs[hm[strsh]]
+        strbytes←(hx[strsh]+⍳¨hz[strsh])(⊂⍛⌷)¨fb[hm[strsh]]
         strz←≢¨strbytes ⋄ strstart←¯1↓+\0,strz ⋄ strpool←∊strbytes
         ⍝BREAK
         nameat←strstart[own]+sn
@@ -104,18 +107,18 @@ LNK←{o←PS∆ARGS ⍵
     }⍬
 
     ⍝ Decode RELA
-    r←{(hn ht hf hm hx hz ha he hl hi)←h
+    r←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb fh0 fhn)←files
         relash←⍸ht=4 ⋄ count←hz[relash]÷24
         ∨⌿he[relash]≠24:'Unexpected RELA entry size'⎕SIGNAL 200
         ∨⌿0≠24|hz[relash]:'Unexpected RELA section size'⎕SIGNAL 200
 
-        bytes←(hx[relash]+⍳¨hz[relash])(⊂⍛⌷)¨objs[hm[relash]]
+        bytes←(hx[relash]+⍳¨hz[relash])(⊂⍛⌷)¨fb[hm[relash]]
         words←(+/count)6⍴323⎕DR∊bytes
 
         rx←words U64 0 ⋄ (rt rawsym)←↓⍉U32⍤0⊢words[;2 3] ⋄ ra←words S64 4
-        own←count/⍳≢count ⋄ rh←(shstart[hm[relash]]+hi[relash])[own]
+        own←count/⍳≢count ⋄ rh←(fh0[hm[relash]]+hi[relash])[own]
 
-        symsh←shstart[hm[relash]]+hl[relash] ⋄ base←symbase[symsh]
+        symsh←fh0[hm[relash]]+hl[relash] ⋄ base←symbase[symsh]
         ∨⌿base=¯1:'RELA does not reference a symbol table'⎕SIGNAL 200
         rs←base[own]+rawsym
 
@@ -191,10 +194,10 @@ LNK←{o←PS∆ARGS ⍵
     out←lfz OUT∆INIT o.out
 
     ⍝ Copy sections
-    _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (lx la lc ls lfz lmz le lf)←layout
+    _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (lx la lc ls lfz lmz le lf)←layout ⋄ (fb fh0 fhn)←files
         chunksz←2*20
         _←{s←⍵ ⋄ n←hz[s]
-            pos←chunksz×⍳⌈n÷chunksz ⋄ obj←⊃objs[hm[s]]
+            pos←chunksz×⍳⌈n÷chunksz ⋄ obj←⊃fb[hm[s]]
             _←{p←⍵ ⋄ k←chunksz⌊n-p ⋄ i←⍳k
                 out[lx[s]+p+i]←obj[hx[s]+p+i]
             ⍬}¨pos
