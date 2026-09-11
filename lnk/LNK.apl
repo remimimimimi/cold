@@ -64,6 +64,7 @@ LNK←{o←PS∆ARGS ⍵
     (sh_name sh_type sh_link sh_info)←↓⍉U32⍤0⊢shtwords[;0 1 10 11]
     (sh_flags sh_offset sh_size sh_addralign sh_entsize)←shtwords∘U64¨2 6 8 12 14
     shstart←¯1↓+\0,e_shnum ⋄ shown←e_shnum/⍳≢e_shnum
+    h←sh_name sh_type sh_flags shown sh_offset sh_size sh_addralign sh_entsize sh_link sh_info
 
     ⍝ Symbols
     sym_sh←⍸sh_type=2 ⋄ symcount←sh_size[sym_sh]÷24
@@ -145,40 +146,55 @@ LNK←{o←PS∆ARGS ⍵
     (cdef commonsize commonalign)←common
 
     ⍝ Layout
-    alloc←0≠2|⌊sh_flags÷2 ⋄ sections←⍸alloc
-    flags←sh_flags[sections] ⋄ type←sh_type[sections]
-    sectionsize←sh_size[sections] ⋄ sectionalign←1⌈sh_addralign[sections]
-    write←2|flags ⋄ exec←2|⌊flags÷4
-    ∨⌿write∧exec:'Writable executable sections are not supported'⎕SIGNAL 200
-    ∨⌿~sectionalign∊2*⍳63:'Unsupported section alignment'⎕SIGNAL 200
-    nobits←type=8 ⋄ group←((~exec)+write)+3×nobits ⋄ nsec←≢sections
-    group,←(≢cdef)⍴5 ⋄ size←sectionsize,commonsize ⋄ align←sectionalign,commonalign
-    base←4194304 ⋄ hdrsz←64+56 ⋄ (order rel memsz)←hdrsz LAYOUT group size align
-    sectionrel←nsec↑rel ⋄ commonrel←nsec↓rel
-    file←~nobits ⋄ file_sections←file/sections ⋄ bss_sections←nobits/sections
-    sh_outoff←(≢sh_type)⍴¯1 ⋄ sh_outaddr←(≢sh_type)⍴0
-    sh_outoff[file_sections]←file/sectionrel ⋄ sh_outaddr[sections]←base+sectionrel
-    filesz←⌈/hdrsz,(file/sectionrel)+file/sectionsize
-    symaddr←reg\(sh_outaddr[reg/st_sec]+reg/st_value)
-    symaddr[⍸abs]←abs/st_value ⋄ symaddr[cdef]←base+commonrel ⋄ symaddr,←0
-    entry←symaddr[startsym] ⋄ out←filesz OUT∆INIT o.out
+    base←4194304
+    layout←{(h s common startsym zero)←⍵
+        (hn ht hf hm hx hz ha he hl hi)←h ⋄ (sn sb st so ss sv sz)←s ⋄ (cs cz ca)←common
+        alloc←0≠2|⌊hf÷2 ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
+        secz←hz[secs] ⋄ seca←1⌈ha[secs]
+
+        write←2|flags ⋄ exec←2|⌊flags÷4
+        ∨⌿write∧exec:'Writable executable sections are not supported'⎕SIGNAL 200
+        ∨⌿~seca∊2*⍳63:'Unsupported section alignment'⎕SIGNAL 200
+
+        nobits←type=8 ⋄ group←((~exec)+write)+3×nobits ⋄ nsec←≢secs
+        group,←(≢cs)⍴5 ⋄ size←secz,cz ⋄ align←seca,ca
+
+        hdrsz←64+56
+        (order rel memsz)←hdrsz LAYOUT group size align
+        secrel←nsec↑rel ⋄ comrel←nsec↓rel
+
+        file←~nobits ⋄ filesec←file/secs
+
+        shoff←(≢ht)⍴¯1 ⋄ shaddr←(≢ht)⍴0
+        shoff[filesec]←file/secrel ⋄ shaddr[secs]←base+secrel
+        filesz←⌈/hdrsz,(file/secrel)+file/secz
+
+        reg←ss≥0 ⋄ abs←ss=¯2
+        symaddr←reg\(shaddr[reg/ss]+reg/sv) ⋄ symaddr[⍸abs]←abs/sv
+        symaddr[cs]←commonaddr←base+comrel ⋄ symaddr,←0
+
+        entry←symaddr[startsym]
+        shoff shaddr commonaddr symaddr filesz memsz entry filesec
+    }h s common startsym zero
+    (lx la lc ls lfz lmz le lf)←layout
+    out←lfz OUT∆INIT o.out
 
     ⍝ Copy sections
     chunksz←2*20
     _←{s←⍵ ⋄ n←sh_size[s]
         pos←chunksz×⍳⌈n÷chunksz ⋄ obj←⊃objs[shown[s]]
         _←{p←⍵ ⋄ k←chunksz⌊n-p ⋄ i←⍳k
-            out[sh_outoff[s]+p+i]←obj[sh_offset[s]+p+i]
+            out[lx[s]+p+i]←obj[sh_offset[s]+p+i]
         ⍬}¨pos
-    ⍬}¨file_sections
+    ⍬}¨lf
 
     ⍝ Apply static relocations
-    _←{(r_targetsec r_offset r_def r_type r_addend)←r
-        rr←⍸alloc[r_targetsec]∧sh_type[r_targetsec]≠8 ⋄ type←r_type[rr] ⋄ kind←(kinds←1 2)⍳type
+    _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r
+        rr←⍸(0≠2|⌊hf[rh]÷2)∧ht[rh]≠8 ⋄ type←rt[rr] ⋄ kind←(kinds←1 2)⍳type
         ∨⌿kind=≢kinds:'Unsupported relocation type'⎕SIGNAL 200
-        width←8 4[kind] ⋄ target←r_targetsec[rr] ⋄ offset←r_offset[rr]
-        ∨⌿(offset>sh_size[target])∨width>sh_size[target]-offset:'Relocation target outside section'⎕SIGNAL 200
-        where←sh_outoff[target]+offset ⋄ S←symaddr[r_def[rr]] ⋄ A←r_addend[rr] ⋄ P←base+where
+        width←8 4[kind] ⋄ target←rh[rr] ⋄ offset←rx[rr]
+        ∨⌿(offset>hz[target])∨width>hz[target]-offset:'Relocation target outside section'⎕SIGNAL 200
+        where←lx[target]+offset ⋄ S←ls[rs[rr]] ⋄ A←ra[rr] ⋄ P←base+where
         value←S+A-P×kind=1 ⋄ pc32←kind=1
         ∨⌿pc32∧((value<¯1×2*31)∨value>¯1+2*31):'Relocation value overflow'⎕SIGNAL 200
 
@@ -192,18 +208,18 @@ LNK←{o←PS∆ARGS ⍵
         ⍬}¨∪width ⋄ ⍬}⍬
 
     ⍝ Construct headers
-    header←{entry base filesz memsz←⍵
+    header←{le base lfz lmz←⍵
         ident←ELF∆IDENT∆EXP,7⍴0
         ehdr←,ident
         ehdr,←2 SB 2 62
         ehdr,←4 SB 1
-        ehdr,←8 SB entry 64 0
+        ehdr,←8 SB le 64 0
         ehdr,←4 SB 0
         ehdr,←2 SB 64 56 1 0 0 0
         phdr←,4 SB 1 7 ⍝ PT_LOAD and PF_R | PF_W | PF_X
-        phdr,←8 SB 0 base base filesz memsz 4096
+        phdr,←8 SB 0 base base lfz lmz 4096
         ehdr,phdr
-    }entry base filesz memsz
+    }le base lfz lmz
     out[⍳≢header]←header
 
     ⍝ Set expected file permissions
