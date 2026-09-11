@@ -180,13 +180,15 @@ LNK←{o←PS∆ARGS ⍵
     out←lfz OUT∆INIT o.out
 
     ⍝ Copy sections
-    chunksz←2*20
-    _←{s←⍵ ⋄ n←sh_size[s]
-        pos←chunksz×⍳⌈n÷chunksz ⋄ obj←⊃objs[shown[s]]
-        _←{p←⍵ ⋄ k←chunksz⌊n-p ⋄ i←⍳k
-            out[lx[s]+p+i]←obj[sh_offset[s]+p+i]
-        ⍬}¨pos
-    ⍬}¨lf
+    _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (lx la lc ls lfz lmz le lf)←layout
+        chunksz←2*20
+        _←{s←⍵ ⋄ n←hz[s]
+            pos←chunksz×⍳⌈n÷chunksz ⋄ obj←⊃objs[hm[s]]
+            _←{p←⍵ ⋄ k←chunksz⌊n-p ⋄ i←⍳k
+                out[lx[s]+p+i]←obj[hx[s]+p+i]
+            ⍬}¨pos
+        ⍬}¨lf
+    ⍬}⍬
 
     ⍝ Apply static relocations
     _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r
