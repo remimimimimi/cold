@@ -74,13 +74,13 @@ LNK←{o←PS∆ARGS ⍵
     (st_info st_other st_shndx)←(256 256 65536){⍺|⌊symwords[;1]÷⍵}¨1 256 65536
     st_bind←⌊st_info÷16 ⋄ st_type←16|st_info
     st_name←U32 symwords[;0] ⋄ (st_value st_size)←symwords∘U64¨2 4 ⋄ st_vis←4|st_other
-    undef←st_shndx=0 ⋄ ordinary←(0<st_shndx)∧st_shndx<65280 ⋄ absolute←st_shndx=65521
-    common←st_shndx=65522 ⋄ xindex←st_shndx=65535
-    ∨⌿xindex:'Extended symbol section indices are not supported yet'⎕SIGNAL 200
-    ∨⌿(st_shndx≥65280)∧~absolute∨common∨xindex:'Unsupported reserve symbol section index'⎕SIGNAL 200
+    und←st_shndx=0 ⋄ reg←(0<st_shndx)∧st_shndx<65280 ⋄ abs←st_shndx=65521
+    com←st_shndx=65522 ⋄ xnd←st_shndx=65535
+    ∨⌿xnd:'Extended symbol section indices are not supported yet'⎕SIGNAL 200
+    ∨⌿(st_shndx≥65280)∧~abs∨com∨xnd:'Unsupported reserve symbol section index'⎕SIGNAL 200
     symstart←¯1↓+\0,symcount ⋄ symown←symcount/⍳≢symcount ⋄ symobj←shown[sym_sh[symown]]
     symtabid←(≢sh_type)⍴¯1 ⋄ symtabid[sym_sh]←⍳≢sym_sh
-    st_sec←(≢st_name)⍴¯1 ⋄ rows←⍸ordinary ⋄ st_sec[rows]←shstart[symobj[rows]]+st_shndx[rows]
+    st_sec←(≢st_name)⍴¯1 ⋄ rows←⍸reg ⋄ st_sec[rows]←shstart[symobj[rows]]+st_shndx[rows]
 
     ⍝ Symbols string table
     symstr_sh←shstart[shown[sym_sh]]+sh_link[sym_sh]
@@ -108,16 +108,16 @@ LNK←{o←PS∆ARGS ⍵
     r_symrow←symstart[rela_symtab[relaown]]+r_sym
 
     ⍝ Global symbols table
-    weak←st_bind=2 ⋄ strong←st_bind∊1 10 ⋄ external←strong∨weak ⋄ defined←ordinary∨absolute∨common
+    weak←st_bind=2 ⋄ strong←st_bind∊1 10 ⋄ ext←strong∨weak ⋄ defd←reg∨abs∨com
     ∨⌿~st_bind∊0 1 2 10:'Unsupported symbol binding'⎕SIGNAL 200
-    strongdef←⍸strong∧defined∧~common
-    ∨⌿~≠names[strongdef]:'Multiple strong symbol definitions'⎕SIGNAL 200
-    def←⍸external∧defined ⋄ def←def[⍋common[def]+2×weak[def]] ⋄ def←(≠names[def])/def
+    sdef←⍸strong∧defd∧~com
+    ∨⌿~≠names[sdef]:'Multiple strong symbol definitions'⎕SIGNAL 200
+    def←⍸ext∧defd ⋄ def←def[⍋com[def]+2×weak[def]] ⋄ def←(≠names[def])/def
     defnames←names[def] ⋄ find←defnames∘⍳
-    r_def←r_symrow ⋄ ext←⍸external[r_def] ⋄ hit←find names[r_def[ext]]
-    missing←hit=≢def ⋄ required←(~weak[r_def[ext]])∨0≠st_vis[r_def[ext]]
+    r_def←r_symrow ⋄ rows←⍸ext[r_def] ⋄ hit←find names[r_def[rows]]
+    missing←hit=≢def ⋄ required←(~weak[r_def[rows]])∨0≠st_vis[r_def[rows]]
     ∨⌿missing∧required:'Undefined symbol'⎕SIGNAL 200
-    zero←≢st_name ⋄ r_def[ext]←(def,zero)[hit] ⋄ real←r_def≠zero
+    zero←≢st_name ⋄ r_def[rows]←(def,zero)[hit] ⋄ real←r_def≠zero
     ∨⌿(usedtype←st_type[real/r_def])=6:'TLS symbol relocation is not supported yet'⎕SIGNAL 200
     ∨⌿usedtype=10:'GNU IFUNC relocation is not supported yet'⎕SIGNAL 200
 
@@ -128,10 +128,12 @@ LNK←{o←PS∆ARGS ⍵
     startsym←def[start]
 
     ⍝ Common symbols
-    commondef←def/⍨common[def] ⋄ commonrow←⍸external∧common
-    cid←names[commondef]∘⍳names[commonrow] ⋄ cid←(keep←cid<≢commondef)/cid ⋄ commonrow←keep/commonrow
-    commonsize←(≢commondef)⍴0 ⋄ commonalign←(≢commondef)⍴1 ⋄ commonid←∪cid
-    commonsize[commonid]←cid{⌈/⍵}⌸st_size[commonrow] ⋄ commonalign[commonid]←cid{⌈/⍵}⌸st_value[commonrow]
+    cdef←def/⍨com[def]
+    ⍝BREAK
+    crow←⍸ext∧com
+    cid←names[cdef]∘⍳names[crow] ⋄ cid←(keep←cid<≢cdef)/cid ⋄ crow←keep/crow
+    commonsize←(≢cdef)⍴0 ⋄ commonalign←(≢cdef)⍴1 ⋄ commonid←∪cid
+    commonsize[commonid]←cid{⌈/⍵}⌸st_size[crow] ⋄ commonalign[commonid]←cid{⌈/⍵}⌸st_value[crow]
 
     ⍝ Layout
     alloc←0≠2|⌊sh_flags÷2 ⋄ sections←⍸alloc
@@ -141,15 +143,15 @@ LNK←{o←PS∆ARGS ⍵
     ∨⌿write∧exec:'Writable executable sections are not supported'⎕SIGNAL 200
     ∨⌿~sectionalign∊2*⍳63:'Unsupported section alignment'⎕SIGNAL 200
     nobits←type=8 ⋄ group←((~exec)+write)+3×nobits ⋄ nsec←≢sections
-    group,←(≢commondef)⍴5 ⋄ size←sectionsize,commonsize ⋄ align←sectionalign,commonalign
+    group,←(≢cdef)⍴5 ⋄ size←sectionsize,commonsize ⋄ align←sectionalign,commonalign
     base←4194304 ⋄ hdrsz←64+56 ⋄ (order rel memsz)←hdrsz LAYOUT group size align
     sectionrel←nsec↑rel ⋄ commonrel←nsec↓rel
     file←~nobits ⋄ file_sections←file/sections ⋄ bss_sections←nobits/sections
     sh_outoff←(≢sh_type)⍴¯1 ⋄ sh_outaddr←(≢sh_type)⍴0
     sh_outoff[file_sections]←file/sectionrel ⋄ sh_outaddr[sections]←base+sectionrel
     filesz←⌈/hdrsz,(file/sectionrel)+file/sectionsize
-    symaddr←ordinary\(sh_outaddr[ordinary/st_sec]+ordinary/st_value)
-    symaddr[⍸absolute]←absolute/st_value ⋄ symaddr[commondef]←base+commonrel ⋄ symaddr,←0
+    symaddr←reg\(sh_outaddr[reg/st_sec]+reg/st_value)
+    symaddr[⍸abs]←abs/st_value ⋄ symaddr[cdef]←base+commonrel ⋄ symaddr,←0
     entry←symaddr[startsym] ⋄ out←filesz OUT∆INIT o.out
 
     ⍝ Copy sections
