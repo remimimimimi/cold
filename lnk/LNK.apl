@@ -92,6 +92,7 @@ LNK←{o←PS∆ARGS ⍵
     ∨⌿0≠strpool[strstart+strsize-1]:'Invalid symbol string table'⎕SIGNAL 200
     zero←⍸strpool=0 ⋄ namelen←zero[(zero⍸nameat)+0≠strpool[nameat]]-nameat
     names←{strpool[nameat[⍵]+⍳namelen[⍵]]}¨⍳≢st_name
+    s←names st_bind st_type st_vis st_sec st_value st_size
 
     ⍝ RELA
     rela_sh←⍸sh_type=4 ⋄ relacount←sh_size[rela_sh]÷24
@@ -107,33 +108,41 @@ LNK←{o←PS∆ARGS ⍵
     rela_symtab←symtabid[relasym_sh]
     ∨⌿rela_symtab=¯1:'RELA does not reference a symbol table'⎕SIGNAL 200
     r_symrow←symstart[rela_symtab[relaown]]+r_sym
+    r←r_targetsec r_offset r_symrow r_type r_addend
 
-    ⍝ Global symbols table
-    weak←st_bind=2 ⋄ strong←st_bind∊1 10 ⋄ ext←strong∨weak ⋄ defd←reg∨abs∨com
-    ∨⌿~st_bind∊0 1 2 10:'Unsupported symbol binding'⎕SIGNAL 200
-    sdef←⍸strong∧defd∧~com
-    ∨⌿~≠names[sdef]:'Multiple strong symbol definitions'⎕SIGNAL 200
-    def←⍸ext∧defd ⋄ def←def[⍋com[def]+2×weak[def]] ⋄ def←(≠names[def])/def
-    defnames←names[def] ⋄ find←defnames∘⍳
-    r_def←r_symrow ⋄ rows←⍸ext[r_def] ⋄ hit←find names[r_def[rows]]
-    missing←hit=≢def ⋄ required←(~weak[r_def[rows]])∨0≠st_vis[r_def[rows]]
-    ∨⌿missing∧required:'Undefined symbol'⎕SIGNAL 200
-    zero←≢st_name ⋄ r_def[rows]←(def,zero)[hit] ⋄ real←r_def≠zero
-    ∨⌿(usedtype←st_type[real/r_def])=6:'TLS symbol relocation is not supported yet'⎕SIGNAL 200
-    ∨⌿usedtype=10:'GNU IFUNC relocation is not supported yet'⎕SIGNAL 200
+    ⍝ Symbol resolution
+    (r common startsym zero)←{(s r)←⍵ ⋄ (sn sb st so ss sv sz)←s ⋄ (rh rx rs rt ra)←r
+        reg←ss≥0 ⋄ abs←ss=¯2 ⋄ com←ss=¯3
+        weak←st_bind=2 ⋄ strong←st_bind∊1 10 ⋄ ext←strong∨weak
+        defd←reg∨abs∨com
+        ∨⌿~≠sn[⍸strong∧defd∧~com]:'Multiple strong symbol definitions'⎕SIGNAL 200
 
-    ⍝ Identify entry point
-    start←⊃find⊂83⎕DR'_start'
-    start=≢defnames:'Undefined symbol: _start'⎕SIGNAL 200
-    startsym←def[start]
+        def←⍸ext∧defd ⋄ def←def[⍋com[def]+2×weak[def]] ⋄ def←(≠sn[def])/def
+        defnames←sn[def] ⋄ find←defnames∘⍳
 
-    ⍝ Common symbols
-    cdef←def/⍨com[def]
-    ⍝BREAK
-    crow←⍸ext∧com
-    cid←names[cdef]∘⍳names[crow] ⋄ cid←(keep←cid<≢cdef)/cid ⋄ crow←keep/crow
-    commonsize←(≢cdef)⍴0 ⋄ commonalign←(≢cdef)⍴1 ⋄ commonid←∪cid
-    commonsize[commonid]←cid{⌈/⍵}⌸st_size[crow] ⋄ commonalign[commonid]←cid{⌈/⍵}⌸st_value[crow]
+        rdef←rs ⋄ rows←⍸ext[rdef] ⋄ hit←find sn[rdef[rows]]
+        missing←hit=≢def ⋄ required←(~weak[rdef[rows]])∨0≠so[rdef[rows]]
+        ∨⌿missing∧required:'Undefined symbol'⎕SIGNAL 200
+
+        zero←≢sn ⋄ rdef[rows]←(def,zero)[hit] ⋄ real←rdef≠zero
+        ∨⌿(usedtype←st_type[real/rdef])=6:'TLS symbol relocation is not supported yet'⎕SIGNAL 200
+        ∨⌿usedtype=10:'GNU IFUNC relocation is not supported yet'⎕SIGNAL 200
+
+        ⍝ Identify entry point
+        start←⊃find⊂83⎕DR'_start'
+        start=≢defnames:'Undefined symbol: _start'⎕SIGNAL 200
+        startsym←def[start]
+
+        ⍝ Common symbols
+        cdef←def/⍨com[def] ⋄ crow←⍸ext∧com
+        cid←names[cdef]∘⍳names[crow] ⋄ cid←(keep←cid<≢cdef)/cid ⋄ crow←keep/crow
+        cz←(≢cdef)⍴0 ⋄ ca←(≢cdef)⍴1 ⋄ ids←∪cid
+        cz[ids]←cid{⌈/⍵}⌸sz[crow] ⋄ ca[ids]←cid{⌈/⍵}⌸sn[crow]
+
+        r←rh rx rdef rt ra ⋄ common←cdef cz ca
+        r common startsym zero
+    }s r
+    (cdef commonsize commonalign)←common
 
     ⍝ Layout
     alloc←0≠2|⌊sh_flags÷2 ⋄ sections←⍸alloc
@@ -164,7 +173,8 @@ LNK←{o←PS∆ARGS ⍵
     ⍬}¨file_sections
 
     ⍝ Apply static relocations
-    _←{rr←⍸alloc[r_targetsec]∧sh_type[r_targetsec]≠8 ⋄ type←r_type[rr] ⋄ kind←(kinds←1 2)⍳type
+    _←{(r_targetsec r_offset r_def r_type r_addend)←r
+        rr←⍸alloc[r_targetsec]∧sh_type[r_targetsec]≠8 ⋄ type←r_type[rr] ⋄ kind←(kinds←1 2)⍳type
         ∨⌿kind=≢kinds:'Unsupported relocation type'⎕SIGNAL 200
         width←8 4[kind] ⋄ target←r_targetsec[rr] ⋄ offset←r_offset[rr]
         ∨⌿(offset>sh_size[target])∨width>sh_size[target]-offset:'Relocation target outside section'⎕SIGNAL 200
