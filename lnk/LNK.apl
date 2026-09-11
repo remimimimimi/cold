@@ -170,5 +170,9 @@ LNK←{o←PS∆ARGS ⍵
     out[⍳64]←ehdr
     out[64+⍳56]←phdr
 
+    ⍝ Set expected file permissions
+    chmod←⎕SHELL 'chmod' '+x' '--' o.out
+    0≠2⊃chmod:('Cannot change output file to +x: ',o.out)⎕SIGNAL 200
+
     ⍝BREAK
     ⍬}
