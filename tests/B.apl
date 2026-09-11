@@ -61,11 +61,11 @@ test_layout_sparse_group_numbers←{
 
 test_norela←{
     (expected object)←AssetPaths 'test_norela.elf.expected' 'test_norela_start.o'
-    expected CheckOutput(⊂object)}
+    expected CheckOutput object}
 
 test_addend←{
     (expected object)←AssetPaths 'test_addend.elf.expected' 'test_addend_start.o'
-    expected CheckOutput(⊂object)}
+    expected CheckOutput object}
 
 test_symbols←{
     (expected start value)←AssetPaths 'test_symbols.elf.expected' 'test_symbols_start.o' 'test_symbols_value.o'
