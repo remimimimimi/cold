@@ -104,20 +104,23 @@ LNK←{o←PS∆ARGS ⍵
     }⍬
 
     ⍝ Decode RELA
-    rela_sh←⍸sh_type=4 ⋄ relacount←sh_size[rela_sh]÷24
-    ∨⌿24≠sh_entsize[rela_sh]:'Unexpected RELA entry size'⎕SIGNAL 200
-    ∨⌿0≠24|sh_size[rela_sh]:'Unexpected RELA section size'⎕SIGNAL 200
-    relabytes←(sh_offset[rela_sh]+⍳¨sh_size[rela_sh])(⊂⍛⌷)¨objs[shown[rela_sh]]
-    relawords←(+/relacount)6⍴323⎕DR∊relabytes
-    r_offset←relawords U64 0 ⋄ (r_type r_sym)←↓⍉U32⍤0⊢relawords[;2 3] ⋄ r_addend←relawords S64 4
-    relastart←¯1↓+\0,relacount ⋄ relaown←relacount/⍳≢relacount ⋄ relaobj←shown[rela_sh[relaown]]
-    relatargetsec←shstart[shown[rela_sh]]+sh_info[rela_sh]
-    r_targetsec←relatargetsec[relaown]
-    relasym_sh←shstart[shown[rela_sh]]+sh_link[rela_sh]
-    relasymbase←symbase[relasym_sh]
-    ∨⌿relasymbase=¯1:'RELA does not reference a symbol table'⎕SIGNAL 200
-    r_symrow←relasymbase[relaown]+r_sym
-    r←r_targetsec r_offset r_symrow r_type r_addend
+    r←{(hn ht hf hm hx hz ha he hl hi)←h
+        relash←⍸ht=4 ⋄ count←hz[relash]÷24
+        ∨⌿he[relash]≠24:'Unexpected RELA entry size'⎕SIGNAL 200
+        ∨⌿0≠24|hz[relash]:'Unexpected RELA section size'⎕SIGNAL 200
+
+        bytes←(hx[relash]+⍳¨hz[relash])(⊂⍛⌷)¨objs[hm[relash]]
+        words←(+/count)6⍴323⎕DR∊bytes
+
+        rx←words U64 0 ⋄ (rt rawsym)←↓⍉U32⍤0⊢words[;2 3] ⋄ ra←words S64 4
+        own←count/⍳≢count ⋄ rh←(shstart[hm[relash]]+hi[relash])[own]
+
+        symsh←shstart[hm[relash]]+hl[relash] ⋄ base←symbase[symsh]
+        ∨⌿base=¯1:'RELA does not reference a symbol table'⎕SIGNAL 200
+        rs←base[own]+rawsym
+
+        rh rx rs rt ra
+    }⍬
 
     ⍝ Symbol resolution
     (r common startsym zero)←{(s r)←⍵ ⋄ (sn sb st so ss sv sz)←s ⋄ (rh rx rs rt ra)←r
