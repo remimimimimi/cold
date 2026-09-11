@@ -164,21 +164,22 @@ LNK←{o←PS∆ARGS ⍵
     ⍬}¨file_sections
 
     ⍝ Apply static relocations
-    rr←⍸alloc[r_targetsec]∧sh_type[r_targetsec]≠8 ⋄ type←r_type[rr] ⋄ kind←(kinds←1 2)⍳type
-    ∨⌿kind=≢kinds:'Unsupported relocation type'⎕SIGNAL 200
-    width←8 4[kind] ⋄ target←r_targetsec[rr] ⋄ offset←r_offset[rr]
-    ∨⌿(offset>sh_size[target])∨width>sh_size[target]-offset:'Relocation target outside section'⎕SIGNAL 200
-    where←sh_outoff[target]+offset ⋄ S←symaddr[r_def[rr]] ⋄ A←r_addend[rr] ⋄ P←base+where
-    value←S+A-P×kind=1 ⋄ pc32←kind=1
-    ∨⌿pc32∧((value<¯1×2*31)∨value>¯1+2*31):'Relocation value overflow'⎕SIGNAL 200
-    batchbytes←2*20 ⍝ avoid large allocation for temporary arrays.
-    _←{w←⍵
-        rows←⍸width=w ⋄ count←≢rows ⋄ span←⌈batchbytes÷1⌈w
-        _←{first←⍵×span ⋄ sel←rows[first+⍳span⌊count-first]
-            bytes←⊖(w⍴256)⊤value[sel]
-            out[(⍳w)∘.+where[sel]]←bytes-256×bytes≥128
-        ⍬}¨⍳⌈count÷span
-    ⍬}¨∪width
+    _←{rr←⍸alloc[r_targetsec]∧sh_type[r_targetsec]≠8 ⋄ type←r_type[rr] ⋄ kind←(kinds←1 2)⍳type
+        ∨⌿kind=≢kinds:'Unsupported relocation type'⎕SIGNAL 200
+        width←8 4[kind] ⋄ target←r_targetsec[rr] ⋄ offset←r_offset[rr]
+        ∨⌿(offset>sh_size[target])∨width>sh_size[target]-offset:'Relocation target outside section'⎕SIGNAL 200
+        where←sh_outoff[target]+offset ⋄ S←symaddr[r_def[rr]] ⋄ A←r_addend[rr] ⋄ P←base+where
+        value←S+A-P×kind=1 ⋄ pc32←kind=1
+        ∨⌿pc32∧((value<¯1×2*31)∨value>¯1+2*31):'Relocation value overflow'⎕SIGNAL 200
+
+        batchbytes←2*20 ⍝ avoid large allocation for temporary arrays.
+        _←{w←⍵
+            rows←⍸width=w ⋄ count←≢rows ⋄ span←⌈batchbytes÷1⌈w
+            _←{first←⍵×span ⋄ sel←rows[first+⍳span⌊count-first]
+                bytes←⊖(w⍴256)⊤value[sel]
+                out[(⍳w)∘.+where[sel]]←bytes-256×bytes≥128
+            ⍬}¨⍳⌈count÷span
+        ⍬}¨∪width ⋄ ⍬}⍬
 
     ⍝ Construct headers
     header←{entry base filesz memsz←⍵
