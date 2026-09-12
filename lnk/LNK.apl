@@ -3,7 +3,7 @@
 U32←{⍵+(2*32)×⍵<0} ⋄ U64←{(U32 ⍺[;⍵])+(2*32)×U32 ⍺[;⍵+1]}
 S64←{(U32 ⍺[;⍵])+(2*32)×⍺[;⍵+1]} ⋄ SB←{b←,⍉⊖(⍺⍴256)⊤⍵ ⋄ b-256×b≥128}
 ZSTR←{80⎕DR(⍵⍳0)↑⍵} ⋄ ZSTRU←{⎕UCS(⍵⍳0)↑⍵}
-ALIGN←{⍺+⍵|-⍺}
+ALIGN←{⍵+⍺|-⍵}
 
 PS∆ARGS←{args←⍵
     ∨/'-h' '--help'∊args:'There should be help printed'⎕SIGNAL 200
@@ -171,7 +171,7 @@ LNK←{o←PS∆ARGS ⍵
 
     ⍝ Layout
     base←4194304
-    (layout copies)←{(h s common startsym)←⍵
+    (layout copies sections)←{(h s common startsym)←⍵
         (hn ht hf hm hx hz ha he hl hi)←h ⋄ (sn sb st so ss sv sz)←s ⋄ (cs cz ca)←common
         alloc←2|⌊hf÷2 ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
         secz←hz[secs] ⋄ seca←1⌈ha[secs]
@@ -200,12 +200,33 @@ LNK←{o←PS∆ARGS ⍵
         symaddr←reg\(shaddr[reg/ss]+reg/sv) ⋄ symaddr[⍸abs]←abs/sv
         symaddr[cs]←base+comrel ⋄ symaddr,←0
 
+        ⍝ Output sections
+        g←group[order] ⋄ x←rel[order]
+        first←≠g ⋄ last←1⌽first
+
+        groups←first/g
+        0<≢(3 4)∩groups:'Unsupported NOBITS output-section flags'⎕SIGNAL 200
+
+        secoff←first/x ⋄ secsz←(last/(x+size[order]))-secoff
+        secalign←g{⌈/⍵}⌸align[order] ⋄ secaddr←base+secoff
+
+        sectype←(1 1 1 0 0 8)[groups] ⋄ secflags←(6 2 3 0 0 3)[groups]
+
+        shstr←z,'.text',z,'.rodata',z,'.data',z,'.bss',z,'.shstrtab',z←⎕UCS 0
+        nameoff←⍸¯1⌽z=shstr ⋄ secname←nameoff[(1 2 3 0 0 4)[groups]] ⋄ shstrname←nameoff[5]
+
+        shstroff←filesz ⋄ shtoff←8 ALIGN shstroff+≢shstr
+        shnum←2+≢groups ⋄ shstrndx←1+≢groups
+        outfilesz←shtoff+64×shnum
+
         entry←symaddr[startsym]
         layout←shoff shaddr symaddr filesz memsz entry
-        layout copies
+        osec←secname sectype secflags secaddr secoff secsz secalign
+        sections←shnum shstr shstrname shstroff shtoff shstrndx outfilesz osec
+        layout copies sections
     }h s common startsym
-    out←{(lx la ls lfz lmz le)←layout
-        lfz OUT∆INIT o.out}⍬
+    out←{(shnum shstr shstrname shstroff shtoff shstrndx outfilesz osec)←sections
+        outfilesz OUT∆INIT o.out}⍬
 
     ⍝ Copy sections
     _←{(fb fh0 fhn)←files ⋄ (fm fx fz ox)←copies
@@ -239,20 +260,42 @@ LNK←{o←PS∆ARGS ⍵
         ⍬}¨∪width
     ⍬}⍬
 
+    (shnum shstr shstrname shstroff shtoff shstrndx outfilesz osec)←sections
+    secname sectype secflags secaddr secoff secsz secalign←osec
+
     ⍝ Construct headers
     header←{(lx la ls lfz lmz le)←layout
         ident←ELF∆IDENT∆EXP,7⍴0
         ehdr←,ident
         ehdr,←2 SB 2 62
         ehdr,←4 SB 1
-        ehdr,←8 SB le 64 0
+        ehdr,←8 SB le 64 shtoff
         ehdr,←4 SB 0
-        ehdr,←2 SB 64 56 1 0 0 0
+        ehdr,←2 SB 64 56 1 64 shnum shstrndx
         phdr←,4 SB 1 7 ⍝ PT_LOAD and PF_R | PF_W | PF_X
         phdr,←8 SB 0 base base lfz lmz 4096
         ehdr,phdr
     }⍬
     out[⍳≢header]←header
+
+    ⍝ Write .shstrtab
+    out[shstroff+⍳≢shstr]←83⎕DR shstr
+
+    ⍝ Construct sections at the end
+    sht←{
+        sh_name      ←(4 SB 0)⍪(4SB⍤0⊢secname) ⍪(4 SB shstrname)
+        sh_type      ←(4 SB 0)⍪(4SB⍤0⊢sectype) ⍪(4 SB 3)
+        sh_flags     ←(8 SB 0)⍪(8SB⍤0⊢secflags)⍪(8 SB 0)
+        sh_addr      ←(8 SB 0)⍪(8SB⍤0⊢secaddr) ⍪(8 SB 0)
+        sh_offset    ←(8 SB 0)⍪(8SB⍤0⊢secoff)  ⍪(8 SB shstroff)
+        sh_size      ←(8 SB 0)⍪(8SB⍤0⊢secsz)   ⍪(8 SB ≢shstr)
+        sh_link      ←(4 SB 0)⍪({4⍴0}⍤0⊢secsz) ⍪(4 SB 0)
+        sh_info      ←(4 SB 0)⍪({4⍴0}⍤0⊢secsz) ⍪(4 SB 0)
+        sh_addralign ←(8 SB 0)⍪(8SB⍤0⊢secalign)⍪(8 SB 1)
+        sh_entsize   ←(8 SB 0)⍪({8⍴0}⍤0⊢secsz) ⍪(8 SB 0)
+        ∊,/sh_name sh_type sh_flags sh_addr sh_offset sh_size sh_link sh_info sh_addralign sh_entsize
+    }⍬
+    out[shtoff+⍳≢sht]←sht
 
     ⍝ Set expected file permissions
     chmod←⎕SHELL 'chmod' '+x' '--' o.out
