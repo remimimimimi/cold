@@ -135,29 +135,33 @@ LNK←{o←PS∆ARGS ⍵
         reg←ss≥0 ⋄ abs←ss=¯2 ⋄ com←ss=¯3
         weak←sb=2 ⋄ strong←(sb=1)∨sb=10 ⋄ ext←strong∨weak
         defd←reg∨abs∨com
-        ∨/~≠(strong∧defd∧~com)/sn:'Multiple strong symbol definitions'⎕SIGNAL 200
+        names←∪sn ⋄ sid←names⍳sn
+        ∨/~≠(strong∧defd∧~com)/sid:'Multiple strong symbol definitions'⎕SIGNAL 200
 
-        def←⍸ext∧defd ⋄ def←def[⍋com[def]+2×weak[def]] ⋄ def←(≠sn[def])/def
-        defnames←sn[def] ⋄ find←defnames∘⍳
+        def←⍸ext∧defd ⋄ def←def[⍋com[def]+2×weak[def]] ⋄ def←(≠sid[def])/def
 
-        rdef←rs ⋄ rows←⍸ext[rdef] ⋄ refs←rdef[rows] ⋄ hit←find sn[refs]
-        missing←hit=≢def ⋄ required←(~weak[refs])∨0≠so[refs]
+        zero←≢sn ⋄ byname←def@(sid[def])⊢(≢names)⍴zero
+
+        rdef←rs ⋄ rows←⍸ext[rdef] ⋄ refs←rdef[rows] ⋄ resolved←byname[sid[refs]]
+        missing←resolved=zero ⋄ required←(~weak[refs])∨0≠so[refs]
         ∨/missing∧required:'Undefined symbol'⎕SIGNAL 200
 
-        zero←≢sn ⋄ rdef[rows]←(def,zero)[hit] ⋄ real←rdef≠zero
+        rdef[rows]←resolved ⋄ real←rdef≠zero
         ∨/(usedtype←st[real/rdef])=6:'TLS symbol relocation is not supported yet'⎕SIGNAL 200
         ∨/usedtype=10:'GNU IFUNC relocation is not supported yet'⎕SIGNAL 200
 
         ⍝ Identify entry point
-        start←⊃find⊂83⎕DR'_start'
-        start=≢defnames:'Undefined symbol: _start'⎕SIGNAL 200
-        startsym←def[start]
+        start←names⍳⊂83⎕DR'_start'
+        start=≢names:'Undefined symbol: _start'⎕SIGNAL 200
+        startsym←byname[start]
+        startsym=zero:'Undefined symbol: _start'⎕SIGNAL 200
 
         ⍝ Common symbols
         cdef←def/⍨com[def] ⋄ crow←⍸ext∧com
-        cid←sn[cdef]∘⍳sn[crow] ⋄ cid←(keep←cid<≢cdef)/cid ⋄ crow←keep/crow
-        cz←(≢cdef)⍴0 ⋄ ca←(≢cdef)⍴1 ⋄ ids←∪cid
-        cz[ids]←cid{⌈/⍵}⌸sz[crow] ⋄ ca[ids]←cid{⌈/⍵}⌸sv[crow]
+        cid←sid[cdef]⍳sid[crow]
+        cid←(keep←cid<≢cdef)/cid ⋄ crow←keep/crow ⋄ ids←∪cid
+        cz←(cid{⌈/⍵}⌸sz[crow])@ids⊢(≢cdef)⍴0
+        ca←(cid{⌈/⍵}⌸sv[crow])@ids⊢(≢cdef)⍴1
 
         r←rh rx rdef rt ra ⋄ common←cdef cz ca
         r common startsym
