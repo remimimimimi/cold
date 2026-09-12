@@ -45,7 +45,9 @@ LNK←{o←PS∆ARGS ⍵
 
     ⍝ Decode input files and sections
     (files h)←{paths←∪o.input ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
-        ∨/ELF∆IDENT∆EXP∘≢¨9∘↑¨fb:'Unexpected ELF file identification'⎕SIGNAL 200
+        bad←(7↑ELF∆IDENT∆EXP)∘≢¨7∘↑¨ident←9∘↑¨fb
+        bad∨←~(7⊃¨ident)∊0 3 ⋄ bad∨←0≠8⊃¨ident
+        ∨/bad:'Unexpected ELF file identification'⎕SIGNAL 200
 
         words←(≢fb)16⍴323⎕DR∊64∘↑¨fb ⋄ meta←U32 words[;4]
         etype←65536|meta ⋄ emachine←⌊meta÷65536

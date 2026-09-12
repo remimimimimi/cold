@@ -70,3 +70,7 @@ test_addend←{
 test_symbols←{
     (expected start value)←AssetPaths 'test_symbols.elf.expected' 'test_symbols_start.o' 'test_symbols_value.o'
     expected CheckOutput start value}
+
+test_weak←{
+    (expected start weak strong unique)←AssetPaths 'test_weak.elf.expected' 'test_weak_start.o' 'test_weak_weak.o' 'test_weak_strong.o' 'test_weak_unique.o'
+    expected CheckOutput start weak strong unique}
