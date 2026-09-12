@@ -74,3 +74,7 @@ test_symbols←{
 test_weak←{
     (expected start weak strong unique)←AssetPaths 'test_weak.elf.expected' 'test_weak_start.o' 'test_weak_weak.o' 'test_weak_strong.o' 'test_weak_unique.o'
     expected CheckOutput start weak strong unique}
+
+test_common←{
+    (expected start a b)←AssetPaths 'test_common.elf.expected' 'test_common_start.o' 'test_common_a.o' 'test_common_b.o'
+    expected CheckOutput start a b}
