@@ -218,7 +218,7 @@ LNK←{o←PS∆ARGS ⍵
 
     ⍝ Apply static relocations
     _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r ⋄ (lx la ls lfz lmz le)←layout
-        rr←⍸(2|⌊hf[rh]÷2)∧ht[rh]≠8 ⋄ type←rt[rr]
+        rr←⍸0≤lx[rh] ⋄ type←rt[rr]
         ∨/(type≠1)∧type≠2:'Unsupported relocation type'⎕SIGNAL 200
         kind←type-1
         width←8 4[kind] ⋄ target←rh[rr] ⋄ offset←rx[rr] ⋄ targetz←hz[target]
