@@ -171,7 +171,7 @@ LNK←{o←PS∆ARGS ⍵
 
     ⍝ Layout
     base←4194304
-    (layout copies sections)←{(h s common startsym)←⍵
+    (layout copies sections segments)←{(h s common startsym)←⍵
         (hn ht hf hm hx hz ha he hl hi)←h ⋄ (sn sb st so ss sv sz)←s ⋄ (cs cz ca)←common
         alloc←2|⌊hf÷2 ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
         secz←hz[secs] ⋄ seca←1⌈ha[secs]
@@ -182,9 +182,15 @@ LNK←{o←PS∆ARGS ⍵
 
         nobits←type=8 ⋄ group←((~exec)+write)+3×nobits ⋄ nsec←≢secs
         group,←(≢cs)⍴5 ⋄ size←secz,cz ⋄ align←seca,ca
+        ∨/group∊3 4:'Unsupported NOBITS output-section flags'⎕SIGNAL 200
 
-        hdrsz←64+56
-        (order rel memsz)←hdrsz LAYOUT group size align
+        ⍝ Segments
+        ne←0<size ⋄ seg←(group=1)+2×group∊2 5 ⍝RX=0,R=1,RW=2
+        class←0 1 2∩ne/seg ⋄ segstart←{⊃⍸seg=⍵}¨class
+        hdrsz←64+56×1+≢class ⋄ lalign←4096∘⌈@segstart⊢align
+
+        ⍝ Actual layouting
+        (order rel memsz)←hdrsz LAYOUT group size lalign
         secrel←nsec↑rel ⋄ comrel←nsec↓rel
 
         file←~nobits ⋄ filesec←file/secs
@@ -200,13 +206,22 @@ LNK←{o←PS∆ARGS ⍵
         symaddr←reg\(shaddr[reg/ss]+reg/sv) ⋄ symaddr[⍸abs]←abs/sv
         symaddr[cs]←base+comrel ⋄ symaddr,←0
 
+        ⍝ Segments continuation
+        span←{
+            m←seg=⍵ ⋄ x←⌊/m/rel
+            fz←(⌈/x,(m∧group≠5)/(rel+size))-x
+            mz←(⌈/m/(rel+size))-x
+            x fz mz
+        }¨class
+
+        px←0,0⊃¨span ⋄ pfz←hdrsz,1⊃¨span ⋄ pmz←hdrsz,2⊃¨span ⋄ pv←base+px
+        pt←(≢px)⍴1 ⋄ pf←4,5 4 6[class] ⋄ pa←(≢px)⍴4096
+
         ⍝ Output sections
         g←group[order] ⋄ x←rel[order]
         first←≠g ⋄ last←1⌽first
 
         groups←first/g
-        0<≢(3 4)∩groups:'Unsupported NOBITS output-section flags'⎕SIGNAL 200
-
         secoff←first/x ⋄ secsz←(last/(x+size[order]))-secoff
         secalign←g{⌈/⍵}⌸align[order] ⋄ secaddr←base+secoff
 
@@ -222,8 +237,9 @@ LNK←{o←PS∆ARGS ⍵
         entry←symaddr[startsym]
         layout←shoff shaddr symaddr filesz memsz entry
         osec←secname sectype secflags secaddr secoff secsz secalign
+        segments←pt pf px pv pv pfz pmz pa
         sections←shnum shstr shstrname shstroff shtoff shstrndx outfilesz osec
-        layout copies sections
+        layout copies sections segments
     }h s common startsym
     out←{(shnum shstr shstrname shstroff shtoff shstrndx outfilesz osec)←sections
         outfilesz OUT∆INIT o.out}⍬
@@ -264,16 +280,15 @@ LNK←{o←PS∆ARGS ⍵
     secname sectype secflags secaddr secoff secsz secalign←osec
 
     ⍝ Construct headers
-    header←{(lx la ls lfz lmz le)←layout
+    header←{(lx la ls lfz lmz le)←layout ⋄ (pt pf px pv pp pfz pmz pa)←segments
         ident←ELF∆IDENT∆EXP,7⍴0
         ehdr←,ident
         ehdr,←2 SB 2 62
         ehdr,←4 SB 1
         ehdr,←8 SB le 64 shtoff
         ehdr,←4 SB 0
-        ehdr,←2 SB 64 56 1 64 shnum shstrndx
-        phdr←,4 SB 1 7 ⍝ PT_LOAD and PF_R | PF_W | PF_X
-        phdr,←8 SB 0 base base lfz lmz 4096
+        ehdr,←2 SB 64 56(≢pt)64 shnum shstrndx
+        phdr←∊,/4 4 8 8 8 8 8 8{⍺SB⍤0⊢⍵}¨segments
         ehdr,phdr
     }⍬
     out[⍳≢header]←header

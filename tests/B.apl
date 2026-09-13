@@ -78,3 +78,7 @@ test_weak←{
 test_common←{
     (expected start a b)←AssetPaths 'test_common.elf.expected' 'test_common_start.o' 'test_common_a.o' 'test_common_b.o'
     expected CheckOutput start a b}
+
+test_segments←{
+    (expected object)←AssetPaths 'test_segments.elf.expected' 'test_segments_start.o'
+    expected CheckOutput object}
