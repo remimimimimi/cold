@@ -71,7 +71,7 @@ LNK←{o←PS∆ARGS ⍵
         files h
     }⍬
 
-    (s r)←{
+    (s r seckeep)←{
         ⍝ Decode symbols
         (s symbase)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb fh0 fhn)←files
             symsh←⍸ht=2 ⋄ symobj←hm[symsh] ⋄ symx←hx[symsh] ⋄ symz←hz[symsh]
@@ -110,6 +110,30 @@ LNK←{o←PS∆ARGS ⍵
             s symbase
         }⍬
 
+        ⍝ COMDAT selection
+        (s seckeep)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb fh0 fhn)←files ⋄ (sn sb st so ss sv sz)←s
+            keep←(≢ht)⍴1
+            gsh←⍸ht=17 ⋄ gobj←hm[gsh] ⋄ goff←hx[gsh] ⋄ glen←hz[gsh]
+            ∨/(glen<4)∨0≠4|glen:'Invalid SHT_GROUP size'⎕SIGNAL 200
+
+            first←¯1↓+\0,1+count←¯1+glen÷4
+            words←323⎕DR∊(goff+⍳¨glen)(⊂⍛⌷)¨fb[gobj]
+            ∨/words[first]≠1:'Unsupported section group flags'⎕SIGNAL 200
+
+            member←~1@first⊢(≢words)⍴0 ⋄mem←member/words ⋄ owner←count/⍳≢gsh
+            ∨/~∧/(0<mem)∧mem<fhn[gobj[owner]]: 'Invalid section group member'⎕SIGNAL 200
+
+            gsymsh←fh0[gobj]+hl[gsh]
+            ∨/¯1=symbase[gsymsh]: 'SHT_GROUP does not reference a symbol table'⎕SIGNAL 200
+
+            lose←~≠sn[symbase[gsymsh]+hi[gsh]]
+            keep[lose/gsh]←0 ⋄ keep[(lose[owner])/mem+fh0[gobj[owner]]]←0
+
+            ss←¯1@(rows/⍨~keep[ss[rows←⍸ss≥0]])⊢ss
+            s←sn sb st so ss sv sz
+            s keep
+        }⍬
+
         ⍝ Decode RELA
         r←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb fh0 fhn)←files
             relash←⍸ht=4 ⋄ relaobj←hm[relash] ⋄ relax←hx[relash] ⋄ relaz←hz[relash]
@@ -129,7 +153,7 @@ LNK←{o←PS∆ARGS ⍵
             rh rx rs rt ra
         }⍬
 
-        s r
+        s r seckeep
     }⍬
 
     ⍝ Symbol resolution
@@ -173,7 +197,7 @@ LNK←{o←PS∆ARGS ⍵
     base←4194304
     (layout copies sections segments)←{(h s common startsym)←⍵
         (hn ht hf hm hx hz ha he hl hi)←h ⋄ (sn sb st so ss sv sz)←s ⋄ (cs cz ca)←common
-        alloc←2|⌊hf÷2 ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
+        alloc←seckeep∧2|⌊hf÷2 ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
         secz←hz[secs] ⋄ seca←1⌈ha[secs]
 
         write←2|flags ⋄ exec←2|⌊flags÷4
