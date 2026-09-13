@@ -45,11 +45,12 @@ LNK←{o←PS∆ARGS ⍵
 
     ⍝ Decode input files and sections
     (files h)←{paths←∪o.input ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
-        bad←(7↑ELF∆IDENT∆EXP)∘≢¨7∘↑¨ident←9∘↑¨fb
-        bad∨←~(7⊃¨ident)∊0 3 ⋄ bad∨←0≠8⊃¨ident
+        head←↑64∘↑¨fb
+        bad←~head[;⍳7]∧.=7↑ELF∆IDENT∆EXP
+        bad∨←~head[;7]∊0 3 ⋄ bad∨←0≠head[;8]
         ∨/bad:'Unexpected ELF file identification'⎕SIGNAL 200
 
-        words←(≢fb)16⍴323⎕DR∊64∘↑¨fb ⋄ meta←U32 words[;4]
+        words←(≢fb)16⍴323⎕DR,head ⋄ meta←U32 words[;4]
         etype←65536|meta ⋄ emachine←⌊meta÷65536
         ∨/1≠etype:'One of the input files is not an object file'⎕SIGNAL 200
         ∨/62≠emachine:'One of the input files is not for AMD64'⎕SIGNAL 200
