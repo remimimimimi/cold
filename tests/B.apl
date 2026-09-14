@@ -86,3 +86,8 @@ test_segments←{
 test_comdat←{
     (expected start a b)←AssetPaths 'test_comdat.elf.expected' 'test_comdat_start.o' 'test_comdat_a.o' 'test_comdat_b.o'
     expected CheckOutput start a b}
+
+test_archive←{
+    archive←'test_archive.a' Archive 'test_archive_required.o' 'test_archive_unused.o'
+    (expected start)←AssetPaths 'test_archive.elf.expected' 'test_archive_start.o'
+    expected CheckOutput start archive}
