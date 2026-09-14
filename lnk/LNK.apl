@@ -109,8 +109,12 @@ LNK←{o←PS∆ARGS ⍵
 
         member←U32 323⎕DR,⌽(+/count)4⍴∊{(⊃fb[am[⍵]])[data[⍵]+4+⍳4×count[⍵]]}¨⍳≢am
         owner←count/⍳≢am ⋄ namex←data+4+4×count ⋄ namez←size-(4+4×count)
-        pool←∊{(⊃fb[am[⍵]])[namex[⍵]+⍳namez[⍵]]}¨⍳≢am
-        zeros←⍸pool=0 ⋄ start←0,1+¯1↓zeros ⋄ start←start/⍨start<≢pool ⋄ len←zeros-start
+        pools←{(⊃fb[am[⍵]])[namex[⍵]+⍳namez[⍵]]}¨⍳≢am ⋄ pool←∊pools ⋄ poolstart←¯1↓+\0,namez
+        zeros←∊{z←⍸0=⊃pools[⍵]
+            count[⍵]>≢z:'Archive symbol-index count does not match its names'⎕SIGNAL 200
+            poolstart[⍵]+count[⍵]↑z
+        }¨⍳≢am
+        first←≠owner ⋄ start←1+¯1,¯1↓zeros ⋄ start[⍸first]←poolstart[first/owner] ⋄ len←zeros-start
         ∨/(≢member)≠≢start:'Archive symbol-index count does not match its names'⎕SIGNAL 200
 
         ⍝ Names remain raw byte vectors.
