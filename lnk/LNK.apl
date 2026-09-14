@@ -119,7 +119,8 @@ LNK←{o←PS∆ARGS ⍵
         am[owner](ax[owner]+member)name
     }⍬
 
-    (s r seckeep)←{
+    ⍝ Decode ELF objects tables
+    TABLES←{files h←⍵
         ⍝ Decode symbols
         (s symbase)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
             symsh←⍸ht=2 ⋄ symobj←hm[symsh] ⋄ symx←hx[symsh] ⋄ symz←hz[symsh]
@@ -158,31 +159,6 @@ LNK←{o←PS∆ARGS ⍵
             s symbase
         }⍬
 
-        ⍝ COMDAT selection
-        (s seckeep)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb view fh0 fhn)←files
-            (vm vx vz)←view ⋄ (sn sb st so ss sv sz)←s
-            keep←(≢ht)⍴1
-            gsh←⍸ht=17 ⋄ gobj←hm[gsh] ⋄ goff←hx[gsh] ⋄ glen←hz[gsh]
-            ∨/(glen<4)∨0≠4|glen:'Invalid SHT_GROUP size'⎕SIGNAL 200
-
-            first←¯1↓+\0,1+count←¯1+glen÷4
-            words←323⎕DR∊(vx[gobj]+goff+⍳¨glen)(⊂⍛⌷)¨fb[vm[gobj]]
-            ∨/words[first]≠1:'Unsupported section group flags'⎕SIGNAL 200
-
-            member←~1@first⊢(≢words)⍴0 ⋄mem←member/words ⋄ owner←count/⍳≢gsh
-            ∨/~∧/(0<mem)∧mem<fhn[gobj[owner]]: 'Invalid section group member'⎕SIGNAL 200
-
-            gsymsh←fh0[gobj]+hl[gsh]
-            ∨/¯1=symbase[gsymsh]: 'SHT_GROUP does not reference a symbol table'⎕SIGNAL 200
-
-            lose←~≠sn[symbase[gsymsh]+hi[gsh]]
-            keep[lose/gsh]←0 ⋄ keep[(lose[owner])/mem+fh0[gobj[owner]]]←0
-
-            ss←¯1@(rows/⍨~keep[ss[rows←⍸ss≥0]])⊢ss
-            s←sn sb st so ss sv sz
-            s keep
-        }⍬
-
         ⍝ Decode RELA
         r←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
             relash←⍸ht=4 ⋄ relaobj←hm[relash] ⋄ relax←hx[relash] ⋄ relaz←hz[relash]
@@ -201,9 +177,34 @@ LNK←{o←PS∆ARGS ⍵
 
             rh rx rs rt ra
         }⍬
+        s r symbase
+    }
+    (s r symbase)←TABLES files h
 
-        s r seckeep
-    }⍬
+    COMDAT←{files h s symbase←⍵
+        (hn ht hf hm hx hz ha he hl hi)←h ⋄(fb view fh0 fhn)←files ⋄ (vm vx vz)←view ⋄ (sn sb st so ss sv sz)←s
+        keep←(≢ht)⍴1
+        gsh←⍸ht=17 ⋄ gobj←hm[gsh] ⋄ goff←hx[gsh] ⋄ glen←hz[gsh]
+        ∨/(glen<4)∨0≠4|glen:'Invalid SHT_GROUP size'⎕SIGNAL 200
+
+        first←¯1↓+\0,1+count←¯1+glen÷4
+        words←323⎕DR∊(vx[gobj]+goff+⍳¨glen)(⊂⍛⌷)¨fb[vm[gobj]]
+        ∨/words[first]≠1:'Unsupported section group flags'⎕SIGNAL 200
+
+        member←~1@first⊢(≢words)⍴0 ⋄mem←member/words ⋄ owner←count/⍳≢gsh
+        ∨/~∧/(0<mem)∧mem<fhn[gobj[owner]]: 'Invalid section group member'⎕SIGNAL 200
+
+        gsymsh←fh0[gobj]+hl[gsh]
+        ∨/¯1=symbase[gsymsh]: 'SHT_GROUP does not reference a symbol table'⎕SIGNAL 200
+
+        lose←~≠sn[symbase[gsymsh]+hi[gsh]]
+        keep[lose/gsh]←0 ⋄ keep[(lose[owner])/mem+fh0[gobj[owner]]]←0
+
+        ss←¯1@(rows/⍨~keep[ss[rows←⍸ss≥0]])⊢ss
+        s←sn sb st so ss sv sz
+        s keep
+    }
+    (s seckeep)←COMDAT files h s symbase
 
     ⍝ Select archive members required by direct objects
     selected←{(fb view fh0 fhn)←files ⋄ (sn sb st so ss sv sz)←s ⋄ (am ax an)←archiveindex
