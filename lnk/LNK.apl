@@ -43,8 +43,8 @@ ELF∆IDENT∆EXP←127 69 76 70 2 1 1 0 0
 LNK←{o←PS∆ARGS ⍵
     0=≢o.input: 'Expected at least one input file to link'⎕SIGNAL 200
 
-    ⍝ Map input files and classify their initial views
-    (files archives h)←{paths←∪o.input ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
+    ⍝ Map and classify inputs
+    (fb direct archives)←{paths←∪o.input ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
         ⍝ view mapping, offset, size
         vm←⍳≢fb ⋄ vx←fb≢⍛⍴0 ⋄ vz←≢¨fb
 
@@ -53,13 +53,15 @@ LNK←{o←PS∆ARGS ⍵
         ar←head[;⍳8]∧.=33 60 97 114 99 104 62 10
         ∨/~elf∨ar:'Unsupported input file format'⎕SIGNAL 200
 
-        ⍝ Archive views are retained for the archive-selection phase
+        direct←(elf/vm)(elf/vx)(elf/vz)
         archives←(ar/vm)(ar/vx)(ar/vz)
 
-        ⍝ Only ELF views continue to the existing ELF parser
-        head←elf⌿head
-        vm←elf/vm ⋄ vx←elf/vx ⋄ vz←elf/vz
+        fb direct archives
+    }⍬
 
+    ⍝ Decode a batch of ELF views
+    ELF←{fb views←⍵ ⋄ (vm vx vz)←views
+        head←↑{64↑(⊃fb[vm[⍵]])[vx[⍵]+⍳64⌊vz[⍵]]}¨⍳≢vm
         bad←~head[;⍳7]∧.=7↑ELF∆IDENT∆EXP
         bad∨←~head[;7]∊0 3 ⋄ bad∨←0≠head[;8]
         ∨/bad:'Unexpected ELF file identification'⎕SIGNAL 200
@@ -69,23 +71,18 @@ LNK←{o←PS∆ARGS ⍵
         1∨.≠etype:'One of the input files is not an object file'⎕SIGNAL 200
         62∨.≠emachine:'One of the input files is not for AMD64'⎕SIGNAL 200
 
-        eshoff←words U64 10 ⋄ eshentsize←⌊(U32 words[;14])÷65536
-        eshnum←65536|U32 words[;15]
+        eshoff←words U64 10 ⋄ eshentsize←⌊(U32 words[;14])÷65536 ⋄ eshnum←65536|U32 words[;15]
         64∨.≠eshentsize:'Unexpected section-header entry size'⎕SIGNAL 200
         ∨/(eshoff>vz)∨(64×eshnum)>vz-eshoff:'Section headers outside input view'⎕SIGNAL 200
 
         words←(+/eshnum)16⍴323⎕DR∊(vx+eshoff+⍳¨64×eshnum)(⊂⍛⌷)¨fb[vm]
-
         (hn ht hl hi)←{U32 words[;⍵]}¨0 1 10 11
         (hf hx hz ha he)←words∘U64¨2 6 8 12 14
         fh0←¯1↓+\0,eshnum ⋄ hm←eshnum/⍳≢eshnum
-
-        ⍝ mapped bytes, ELF views, section start, section count
-        files←fb(vm vx vz)fh0 eshnum
-        ⍝ name, type, flags, file, file offset, size, align, entry size, link, info
+        files←fb views fh0 eshnum
         h←hn ht hf hm hx hz ha he hl hi
-        files archives h
-    }⍬
+        files h}
+    (files h)←ELF fb direct
 
     ⍝ Decode GNU archive symbol indexes
     archiveindex←{(am ax az)←archives ⋄ (fb view fh0 fhn)←files
