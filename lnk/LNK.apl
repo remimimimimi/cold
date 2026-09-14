@@ -204,7 +204,6 @@ LNK←{o←PS∆ARGS ⍵
         s←sn sb st so ss sv sz
         s keep
     }
-    (s seckeep)←COMDAT files h s symbase
 
     ⍝ Select archive members required by direct objects
     SELECT←{s picked←⍵ ⋄ (fb view fh0 fhn)←files ⋄ (sn sb st so ss sv sz)←s ⋄ (am ax an)←archiveindex
@@ -241,6 +240,29 @@ LNK←{o←PS∆ARGS ⍵
         (map data size)(picked,key)
     }
     (selected picked)←SELECT s ⍬
+
+    ⍝ Archive-member discovery step
+    STEP←{(files h s r symbase selected picked)←⍵
+        0=≢⊃selected:files h s r symbase selected picked
+
+        (nfiles nh)←ELF fb selected ⋄ (ns nr nb)←TABLES nfiles nh
+        (ofb ov ofh0 ofhn)←files ⋄(ovm ovx ovz)←ov
+        (nfb nv nfh0 nfhn)←nfiles ⋄ (nvm nvx nvz)←nv
+        vbase←≢ovm ⋄ hbase←≢⊃h ⋄ sbase←≢⊃s
+
+        (nhn nht nhf nhm nhx nhz nha nhe nhl nhi)←nh ⋄ nhm+←vbase ⋄ nh←nhn nht nhf nhm nhx nhz nha nhe nhl nhi
+        (nsn nsb nst nso nss nsv nsz)←ns ⋄ nss←hbase∘+@{⍵≥0}⊢nss ⋄ ns←nsn nsb nst nso nss nsv nsz
+        (nrh nrx nrs nrt nra)←nr ⋄ nrh+←hbase ⋄ nrs+←sbase ⋄ nr←nrh nrx nrs nrt nra
+        nb←sbase∘+@{⍵≥0}⊢nb
+        view←(ovm,nvm)(ovx,nvx)(ovz,nvz) ⋄ files←fb view(ofh0,hbase+nfh0)(ofhn,nfhn)
+        h←h,¨nh ⋄ s←s,¨ns ⋄ r←r,¨nr ⋄ symbase,←nb
+
+        files h s r symbase selected picked
+    }
+    state←STEP files h s r symbase selected picked
+    (files h s r symbase selected picked)←state
+
+    (s seckeep)←COMDAT files h s symbase
 
     ⍝ Symbol resolution
     (r common startsym)←{(s r)←⍵ ⋄ (sn sb st so ss sv sz)←s ⋄ (rh rx rs rt ra)←r
