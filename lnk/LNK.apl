@@ -44,19 +44,21 @@ LNK←{o←PS∆ARGS ⍵
     0=≢o.input: 'Expected at least one input file to link'⎕SIGNAL 200
 
     ⍝ Map and classify inputs
-    (fb direct archives)←{paths←∪o.input ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
+    (paths fb direct archives)←{paths←∪o.input ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
         ⍝ view mapping, offset, size
         vm←⍳≢fb ⋄ vx←fb≢⍛⍴0 ⋄ vz←≢¨fb
 
         head←↑{64↑(⊃fb[vm[⍵]])[vx[⍵]+⍳64⌊vz[⍵]]}¨⍳≢vm
         elf←head[;⍳4]∧.=127 69 76 70
-        ar←head[;⍳8]∧.=33 60 97 114 99 104 62 10
+        thick←head[;⍳8]∧.=33 60 97 114 99 104 62 10
+        thin←head[;⍳8]∧.=33 60 116 104 105 110 62 10
+        ar←thick∨thin
         ∨/~elf∨ar:'Unsupported input file format'⎕SIGNAL 200
 
         direct←(elf/vm)(elf/vx)(elf/vz)
-        archives←(ar/vm)(ar/vx)(ar/vz)
+        archives←(ar/vm)(ar/vx)(ar/vz)(ar/thin)
 
-        fb direct archives
+        paths fb direct archives
     }⍬
 
     ⍝ Decode a batch of ELF views
@@ -85,8 +87,8 @@ LNK←{o←PS∆ARGS ⍵
     (files h)←ELF fb direct
 
     ⍝ Decode GNU archive symbol indexes
-    archiveindex←{(am ax az)←archives ⋄ (fb view fh0 fhn)←files
-        0=≢am:⍬ ⍬ ⍬
+    archiveindex←{(am ax az at)←archives ⋄ (fb view fh0 fhn)←files
+        0=≢am:⍬ ⍬ ⍬ ⍬ ⍬ ⍬
         ∨/az<68:'Archive is too small for its symbol index'⎕SIGNAL 200
 
         mh←↑{(⊃fb[am[⍵]])[ax[⍵]+8+⍳60]}¨⍳≢am
@@ -102,6 +104,18 @@ LNK←{o←PS∆ARGS ⍵
         }¨↓digit
         data←ax+68
         ∨/size>az-68:'Archive symbol index outside archive view'⎕SIGNAL 200
+
+        next←data+2 ALIGN size ⋄ limit←ax+az
+        lh←↑{60↑(⊃fb[am[⍵]])[next[⍵]+⍳0⌈60⌊limit[⍵]-next[⍵]]}¨⍳≢am
+        long←lh[;0 1]∧.=47 47
+        z←{d←⍵/⍨⍵≠32
+            ∨/~d∊48+⍳10:'Invalid archive long-name table size'⎕SIGNAL 200
+            10⊥d-48
+        }¨↓long⌿lh[;48+⍳10]
+        longz←z@(⍸long)⊢(≢am)⍴0
+        longx←next+60
+        ∨/long∧longz>limit-longx:'Archive long-name table outside archive'⎕SIGNAL 200
+        longx←¯1@{~long}⊢longx
 
         ⍝ The GNU/SysV index begins with big-endian u32 count.
         count←{256⊥(⊃fb[am[⍵]])[data[⍵]+⍳4]}¨⍳≢am
@@ -119,8 +133,8 @@ LNK←{o←PS∆ARGS ⍵
 
         ⍝ Names remain raw byte vectors.
         name←{pool[start[⍵]+⍳len[⍵]]}¨⍳≢start
-        ⍝ archive mapping, member-header offset, symbol name
-        am[owner](ax[owner]+member)name
+        ⍝ archive mapping, member-header offset, symbol name, thin, long-name offset and size
+        am[owner](ax[owner]+member)name(at[owner])(longx[owner])(longz[owner])
     }⍬
 
     ⍝ Decode ELF objects tables
@@ -210,22 +224,23 @@ LNK←{o←PS∆ARGS ⍵
     }
 
     ⍝ Select archive members required by direct objects
-    SELECT←{s picked←⍵ ⋄ (fb view fh0 fhn)←files ⋄ (sn sb st so ss sv sz)←s ⋄ (am ax an)←archiveindex
-        0=≢am:(⍬ ⍬ ⍬)picked
+    SELECT←{s picked←⍵ ⋄ (fb view fh0 fhn)←files ⋄ (sn sb st so ss sv sz)←s ⋄ (am ax an at alx alz)←archiveindex
+        0=≢am:(⍬ ⍬ ⍬)⍬ picked
 
         strong←sb∊1 10 ⋄ defined←strong∧ss≠¯1 ⋄ undefined←strong∧ss=¯1
         need←∪(undefined/sn)~defined/sn
 
         ⍝ Select the first archive-index entry for each required name
         rows←an⍳need ⋄ rows←rows/⍨rows<≢an
-        0=≢rows:(⍬ ⍬ ⍬)picked
+        0=≢rows:(⍬ ⍬ ⍬)⍬ picked
 
         ⍝ Several symbols can select the same archive member
         key←am[rows],¨ax[rows]
         first←≠key ⋄ rows←first/rows ⋄ key←first/key
         new←~key∊picked ⋄ rows←new/rows ⋄ key←new/key
-        0=≢rows:(⍬ ⍬ ⍬)picked
+        0=≢rows:(⍬ ⍬ ⍬)⍬ picked
 
+        thin←at[rows] ⋄ lx←alx[rows] ⋄ lz←alz[rows]
         map←am[rows] ⋄ off←ax[rows] ⋄ limit←≢¨fb[map]
         ∨/(off>limit)∨60>limit-off:'Archive member header outside archive'⎕SIGNAL 200
 
@@ -238,19 +253,50 @@ LNK←{o←PS∆ARGS ⍵
             10⊥d-48
         }¨↓digit
         data←off+60
-        ∨/size>limit-data:'Archive member data outside archive'⎕SIGNAL 200
+        ∨/(~thin)∧size>limit-data:'Archive member data outside archive'⎕SIGNAL 200
+
+        tr←⍸thin
+        memberpaths←{i←⍵ ⋄ field←mh[i;⍳16] ⋄ field←field/⍨field≠32
+            0=≢field:'Empty thin archive member name'⎕SIGNAL 200
+
+            bytes←{
+                47≠⊃field:{
+                    47≠⊃¯1↑field:'Invalid thin archive member name'⎕SIGNAL 200
+                    ¯1↓field}⍬
+
+                digits←1↓field
+                (0=≢digits)∨∨/~digits∊48+⍳10:'Invalid thin archive long-name reference'⎕SIGNAL 200
+                ¯1=lx[i]:'Thin archive has no long-name table'⎕SIGNAL 200
+
+                x←10⊥digits-48
+                x≥lz[i]:'Thin archive long-name reference outside table'⎕SIGNAL 200
+                pool←(⊃fb[map[i]])[lx[i]+x+⍳lz[i]-x]
+                end←pool⍳10
+                end=≢pool:'Unterminated thin archive member name'⎕SIGNAL 200
+
+                name←end↑pool
+                (0=≢name)∨47≠⊃¯1↑name:'Invalid thin archive long name'⎕SIGNAL 200
+                ¯1↓name}⍬
+
+            path←⎕UCS bytes
+            47=⊃bytes:path
+            (⊃1⎕NPARTS paths[map[i]]),path
+        }¨tr
+
+        newfb←{0=≢⍵:⍬ ⋄ {83 ¯1⎕MAP⍵'R'}¨⍵}memberpaths
+        map[tr]←(≢fb)+⍳≢newfb ⋄ data[tr]←0 ⋄ size[tr]←≢¨newfb
 
         ⍝Selected ELF views: mapping, file offset, size
-        (map data size)(picked,key)
+        (map data size)newfb(picked,key)
     }
 
     ⍝ Archive-member discovery step
-    STEP←{(files h s r symbase selected picked)←⍵ ⋄ (selected picked)←SELECT s picked
+    STEP←{(files h s r symbase selected picked)←⍵ ⋄ (selected newfb picked)←SELECT s picked
         0=≢⊃selected:files h s r symbase selected picked
 
+        (ofb ov ofh0 ofhn)←files ⋄ fb←ofb,newfb
         (nfiles nh)←ELF fb selected ⋄ (ns nr nb)←TABLES nfiles nh
-        (ofb ov ofh0 ofhn)←files ⋄(ovm ovx ovz)←ov
-        (nfb nv nfh0 nfhn)←nfiles ⋄ (nvm nvx nvz)←nv
+        (ovm ovx ovz)←ov ⋄ (nfb nv nfh0 nfhn)←nfiles ⋄ (nvm nvx nvz)←nv
         vbase←≢ovm ⋄ hbase←≢⊃h ⋄ sbase←≢⊃s
 
         (nhn nht nhf nhm nhx nhz nha nhe nhl nhi)←nh ⋄ nhm+←vbase ⋄ nh←nhn nht nhf nhm nhx nhz nha nhe nhl nhi
