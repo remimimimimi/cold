@@ -96,3 +96,8 @@ test_archive_chain←{
     archive←'test_archive_chain.a' Archive 'test_archive_chain_first.o' 'test_archive_chain_second.o'
     (expected start)←AssetPaths 'test_archive_chain.elf.expected' 'test_archive_chain_start.o'
     expected CheckOutput start archive}
+
+test_archive_lazy←{
+    archive←'test_archive_lazy.a' Archive 'test_archive_required.o' 'test_archive_unused.s'
+    (expected start)←AssetPaths 'test_archive_lazy.elf.expected' 'test_archive_start.o'
+    expected CheckOutput start archive}
