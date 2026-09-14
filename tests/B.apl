@@ -88,16 +88,16 @@ test_comdat←{
     expected CheckOutput start a b}
 
 test_archive←{
-    archive←'test_archive.a' Archive 'test_archive_required.o' 'test_archive_unused.o'
+    archive←0 'test_archive.a' Archive 'test_archive_required.o' 'test_archive_unused.o'
     (expected start)←AssetPaths 'test_archive.elf.expected' 'test_archive_start.o'
     expected CheckOutput start archive}
 
 test_archive_chain←{
-    archive←'test_archive_chain.a' Archive 'test_archive_chain_first.o' 'test_archive_chain_second.o'
+    archive←0 'test_archive_chain.a' Archive 'test_archive_chain_first.o' 'test_archive_chain_second.o'
     (expected start)←AssetPaths 'test_archive_chain.elf.expected' 'test_archive_chain_start.o'
     expected CheckOutput start archive}
 
 test_archive_lazy←{
-    archive←'test_archive_lazy.a' Archive 'test_archive_required.o' 'test_archive_unused.s'
+    archive←0 'test_archive_lazy.a' Archive 'test_archive_required.o' 'test_archive_unused.s'
     (expected start)←AssetPaths 'test_archive_lazy.elf.expected' 'test_archive_start.o'
     expected CheckOutput start archive}

@@ -36,7 +36,7 @@ ResolveAsset←{
 
 AssetPaths←{ResolveAsset¨⊆⍵}
 
-Archive←{name←⍺ ⋄ members←⊆⍵
+Archive←{thin name←⍺ ⋄ members←⊆⍵
     assets←(ProjectRoot⍬),'/tests/assets/'
     path←assets,'.data/',name
     ⎕NEXISTS path:path
@@ -44,7 +44,7 @@ Archive←{name←⍺ ⋄ members←⊆⍵
     objects←AssetPaths members
     _←3 ⎕MKDIR assets,'.data/'
 
-    cmd←'ar rcs "',path,'" ',∊{'"',⍵,'" '}¨objects
+    cmd←'ar rcs',('T'/⍨thin),' "',path,'" ',∊{'"',⍵,'" '}¨objects
     result←⎕SHELL cmd
     0 0≢result[2 3]:('Cannot build archive ',path,': ',⍕result)⎕SIGNAL 11
     path}
