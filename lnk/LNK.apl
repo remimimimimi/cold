@@ -224,7 +224,7 @@ LNK←{o←PS∆ARGS ⍵
     }
 
     ⍝ Select archive members required by direct objects
-    SELECT←{s picked←⍵ ⋄ (fb view fh0 fhn)←files ⋄ (sn sb st so ss sv sz)←s ⋄ (am ax an at alx alz)←archiveindex
+    SELECT←{files s picked←⍵ ⋄ (fb view fh0 fhn)←files ⋄ (sn sb st so ss sv sz)←s ⋄ (am ax an at alx alz)←archiveindex
         0=≢am:(⍬ ⍬ ⍬)⍬ picked
 
         strong←sb∊1 10 ⋄ defined←strong∧ss≠¯1 ⋄ undefined←strong∧ss=¯1
@@ -291,7 +291,7 @@ LNK←{o←PS∆ARGS ⍵
     }
 
     ⍝ Archive-member discovery step
-    STEP←{(files h s r symbase selected picked)←⍵ ⋄ (selected newfb picked)←SELECT s picked
+    STEP←{(files h s r symbase selected picked)←⍵ ⋄ (selected newfb picked)←SELECT files s picked
         0=≢⊃selected:files h s r symbase selected picked
 
         (ofb ov ofh0 ofhn)←files ⋄ fb←ofb,newfb
