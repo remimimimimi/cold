@@ -43,44 +43,59 @@ ELF∆IDENT∆EXP←127 69 76 70 2 1 1 0 0
 LNK←{o←PS∆ARGS ⍵
     0=≢o.input: 'Expected at least one input file to link'⎕SIGNAL 200
 
-    ⍝ Decode input files and sections
-    (files h)←{paths←∪o.input ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
-        head←↑64∘↑¨fb
+    ⍝ Map input files and classify their initial views
+    (files archives h)←{paths←∪o.input ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
+        ⍝ view mapping, offset, size
+        vm←⍳≢fb ⋄ vx←fb≢⍛⍴0 ⋄ vz←≢¨fb
+
+        head←↑{64↑(⊃fb[vm[⍵]])[vx[⍵]+⍳64⌊vz[⍵]]}¨⍳≢vm
+        elf←head[;⍳4]∧.=127 69 76 70
+        ar←head[;⍳8]∧.=33 60 97 114 99 104 62 10
+        ∨/~elf∨ar:'Unsupported input file format'⎕SIGNAL 200
+
+        ⍝ Archive views are retained for the archive-selection phase
+        archives←(ar/vm)(ar/vx)(ar/vz)
+
+        ⍝ Only ELF views continue to the existing ELF parser
+        head←elf⌿head
+        vm←elf/vm ⋄ vx←elf/vx ⋄ vz←elf/vz
+
         bad←~head[;⍳7]∧.=7↑ELF∆IDENT∆EXP
         bad∨←~head[;7]∊0 3 ⋄ bad∨←0≠head[;8]
         ∨/bad:'Unexpected ELF file identification'⎕SIGNAL 200
 
-        words←(≢fb)16⍴323⎕DR,head ⋄ meta←U32 words[;4]
+        words←(≢vm)16⍴323⎕DR,head ⋄ meta←U32 words[;4]
         etype←65536|meta ⋄ emachine←⌊meta÷65536
-        ∨/1≠etype:'One of the input files is not an object file'⎕SIGNAL 200
-        ∨/62≠emachine:'One of the input files is not for AMD64'⎕SIGNAL 200
+        1∨.≠etype:'One of the input files is not an object file'⎕SIGNAL 200
+        62∨.≠emachine:'One of the input files is not for AMD64'⎕SIGNAL 200
 
         eshoff←words U64 10 ⋄ eshentsize←⌊(U32 words[;14])÷65536
         eshnum←65536|U32 words[;15]
-        ∨/64≠eshentsize:'Unexpected section-header entry size'⎕SIGNAL 200
+        64∨.≠eshentsize:'Unexpected section-header entry size'⎕SIGNAL 200
+        ∨/(eshoff>vz)∨(64×eshnum)>vz-eshoff:'Section headers outside input view'⎕SIGNAL 200
 
-        ⍝ Decode section headers
-        words←(+/eshnum)16⍴323⎕DR∊(eshoff+⍳¨64×eshnum)(⊂⍛⌷)¨fb
+        words←(+/eshnum)16⍴323⎕DR∊(vx+eshoff+⍳¨64×eshnum)(⊂⍛⌷)¨fb[vm]
+
         (hn ht hl hi)←{U32 words[;⍵]}¨0 1 10 11
         (hf hx hz ha he)←words∘U64¨2 6 8 12 14
         fh0←¯1↓+\0,eshnum ⋄ hm←eshnum/⍳≢eshnum
 
-        ⍝ mapped bytes, section start, section count
-        files←fb fh0 eshnum
+        ⍝ mapped bytes, ELF views, section start, section count
+        files←fb(vm vx vz)fh0 eshnum
         ⍝ name, type, flags, file, file offset, size, align, entry size, link, info
         h←hn ht hf hm hx hz ha he hl hi
-        files h
+        files archives h
     }⍬
 
     (s r seckeep)←{
         ⍝ Decode symbols
-        (s symbase)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb fh0 fhn)←files
+        (s symbase)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
             symsh←⍸ht=2 ⋄ symobj←hm[symsh] ⋄ symx←hx[symsh] ⋄ symz←hz[symsh]
             count←symz÷24
             ∨/24≠he[symsh]:'Unexpected symbol entry size'⎕SIGNAL 200
             ∨/0≠24|symz:'Invalid symbol table size'⎕SIGNAL 200
 
-            words←(+/count)6⍴323⎕DR∊(symx+⍳¨symz)(⊂⍛⌷)¨fb[symobj]
+            words←(+/count)6⍴323⎕DR∊(vx[symobj]+symx+⍳¨symz)(⊂⍛⌷)¨fb[vm[symobj]]
 
             (info other shndx)←(256 256 65536){⍺|⌊words[;1]÷⍵}¨1 256 65536
             sb←⌊info÷16 ⋄ st←16|info ⋄ sn←U32 words[;0]
@@ -100,7 +115,7 @@ LNK←{o←PS∆ARGS ⍵
             strsh←fh0[symobj]+hl[symsh]
             ∨/hm[strsh]≠symobj:'Symbol table links outside its object'⎕SIGNAL 200
             strx←hx[strsh] ⋄ strz←hz[strsh] ⋄ strstart←¯1↓+\0,strz
-            strpool←∊(strx+⍳¨strz)(⊂⍛⌷)¨fb[symobj]
+            strpool←∊(vx[symobj]+strx+⍳¨strz)(⊂⍛⌷)¨fb[vm[symobj]]
 
             nameat←strstart[own]+sn
             ∨/0≠strpool[strstart+strz-1]:'Invalid symbol string table'⎕SIGNAL 200
@@ -112,13 +127,14 @@ LNK←{o←PS∆ARGS ⍵
         }⍬
 
         ⍝ COMDAT selection
-        (s seckeep)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb fh0 fhn)←files ⋄ (sn sb st so ss sv sz)←s
+        (s seckeep)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb view fh0 fhn)←files
+            (vm vx vz)←view ⋄ (sn sb st so ss sv sz)←s
             keep←(≢ht)⍴1
             gsh←⍸ht=17 ⋄ gobj←hm[gsh] ⋄ goff←hx[gsh] ⋄ glen←hz[gsh]
             ∨/(glen<4)∨0≠4|glen:'Invalid SHT_GROUP size'⎕SIGNAL 200
 
             first←¯1↓+\0,1+count←¯1+glen÷4
-            words←323⎕DR∊(goff+⍳¨glen)(⊂⍛⌷)¨fb[gobj]
+            words←323⎕DR∊(vx[gobj]+goff+⍳¨glen)(⊂⍛⌷)¨fb[vm[gobj]]
             ∨/words[first]≠1:'Unsupported section group flags'⎕SIGNAL 200
 
             member←~1@first⊢(≢words)⍴0 ⋄mem←member/words ⋄ owner←count/⍳≢gsh
@@ -136,13 +152,13 @@ LNK←{o←PS∆ARGS ⍵
         }⍬
 
         ⍝ Decode RELA
-        r←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb fh0 fhn)←files
+        r←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
             relash←⍸ht=4 ⋄ relaobj←hm[relash] ⋄ relax←hx[relash] ⋄ relaz←hz[relash]
             count←relaz÷24
             ∨/24≠he[relash]:'Unexpected RELA entry size'⎕SIGNAL 200
             ∨/0≠24|relaz:'Unexpected RELA section size'⎕SIGNAL 200
 
-            words←(+/count)6⍴323⎕DR∊(relax+⍳¨relaz)(⊂⍛⌷)¨fb[relaobj]
+            words←(+/count)6⍴323⎕DR∊(vx[relaobj]+relax+⍳¨relaz)(⊂⍛⌷)¨fb[vm[relaobj]]
 
             rx←words U64 0 ⋄ (rt rawsym)←{U32 words[;⍵]}¨2 3 ⋄ ra←words S64 4
             own←count/⍳≢count ⋄ rh←(fh0[relaobj]+hi[relash])[own]
@@ -198,6 +214,7 @@ LNK←{o←PS∆ARGS ⍵
     base←4194304
     (layout copies sections segments)←{(h s common startsym)←⍵
         (hn ht hf hm hx hz ha he hl hi)←h ⋄ (sn sb st so ss sv sz)←s ⋄ (cs cz ca)←common
+        (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
         alloc←seckeep∧2|⌊hf÷2 ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
         secz←hz[secs] ⋄ seca←1⌈ha[secs]
 
@@ -221,7 +238,8 @@ LNK←{o←PS∆ARGS ⍵
         file←~nobits ⋄ filesec←file/secs
         foff←file/secrel ⋄ fsz←hz[filesec]
 
-        copies←(hm[filesec])(hx[filesec])fsz foff
+        src←hm[filesec]
+        copies←(vm[src])(vx[src]+hx[filesec])fsz foff
 
         shoff←foff@filesec⊢(≢ht)⍴¯1
         shaddr←(base+secrel)@secs⊢(≢ht)⍴0
@@ -270,7 +288,7 @@ LNK←{o←PS∆ARGS ⍵
         outfilesz OUT∆INIT o.out}⍬
 
     ⍝ Copy sections
-    _←{(fb fh0 fhn)←files ⋄ (fm fx fz ox)←copies
+    _←{(fb view fh0 fhn)←files ⋄ (fm fx fz ox)←copies
         chunksz←2*20
         _←{row←⍵ ⋄ n←fz[row]
             pos←chunksz×⍳⌈n÷chunksz ⋄ obj←⊃fb[fm[row]]
