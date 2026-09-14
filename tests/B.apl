@@ -101,3 +101,8 @@ test_archive_lazy←{
     archive←0 'test_archive_lazy.a' Archive 'test_archive_required.o' 'test_archive_unused.s'
     (expected start)←AssetPaths 'test_archive_lazy.elf.expected' 'test_archive_start.o'
     expected CheckOutput start archive}
+
+test_archive_thin←{
+    archive←1 'test_archive_thin.a' Archive 'test_archive_required.o' 'test_archive_unused.s'
+    (expected start)←AssetPaths 'test_archive_thin.elf.expected' 'test_archive_start.o'
+    expected CheckOutput start archive}
