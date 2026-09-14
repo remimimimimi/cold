@@ -87,6 +87,46 @@ LNK←{o←PS∆ARGS ⍵
         files archives h
     }⍬
 
+    ⍝ Decode GNU archive symbol indexes
+    archiveindex←{(am ax az)←archives ⋄ (fb view fh0 fhn)←files
+        0=≢am:⍬ ⍬ ⍬
+        ∨/az<68:'Archive is too small for its symbol index'⎕SIGNAL 200
+
+        mh←↑{(⊃fb[am[⍵]])[ax[⍵]+8+⍳60]}¨⍳≢am
+        47∨.≠mh[;0]:'Archive has no symbol index'⎕SIGNAL 200
+        ∨/~mh[;1]∊32 47:'Invalid archive symbol-index member'⎕SIGNAL 200
+        ∨/~mh[;58 59]∧.=96 10:'Invalid archive member header'⎕SIGNAL 200
+
+        ⍝ Decimal member size occupies bytes 48-57
+        digit←mh[;48+⍳10]
+        size←{d←⍵/⍨⍵≠32
+            ∨/~d∊48+⍳10:'Invalid archive member size'⎕SIGNAL 200
+            10⊥d-48
+        }¨↓digit
+        data←ax+68
+        ∨/size>az-68:'Archive symbol index outside archive view'⎕SIGNAL 200
+
+        ⍝ The GNU/SysV index begins with big-endian u32 count.
+        count←{256⊥256|(⊃fb[am[⍵]])[data[⍵]+⍳4]}¨⍳≢am
+        ∨/size<4+4×count:'Invalid archive symbol index'⎕SIGNAL 200
+
+        ⍝ Flatten all member offsets.
+        offbytes←∊{(⊃fb[am[⍵]])[data[⍵]+4+⍳4×count[⍵]]}¨⍳≢am
+        member←(256|(+/count)4⍴offbytes)+.×256*3 2 1 0 ⋄ owner←count/⍳≢am
+
+        ⍝ Flatten the NULL-terminated name regions.
+        namex←data+4+4×count ⋄ namez←size-(4+4×count)
+
+        pool←∊{(⊃fb[am[⍵]])[namex[⍵]+⍳namez[⍵]]}¨⍳≢am
+        zeros←⍸pool=0 ⋄ start←0,1+¯1↓zeros ⋄ start←start/⍨start<≢pool ⋄ len←zeros-start
+        ∨/(≢member)≠≢start:'Archive symbol-index count does not match its names'⎕SIGNAL 200
+
+        ⍝ Names remain raw byte vectors.
+        name←{pool[start[⍵]+⍳len[⍵]]}¨⍳≢start
+        ⍝ archive mapping, member-header offset, symbol name
+        am[owner] member name
+    }⍬
+
     (s r seckeep)←{
         ⍝ Decode symbols
         (s symbase)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
