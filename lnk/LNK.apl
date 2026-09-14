@@ -392,12 +392,12 @@ LNK←{o←PS∆ARGS ⍵
     ⍝ Apply static relocations
     _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r ⋄ (lx la ls lfz lmz le)←layout
         rr←⍸0≤lx[rh] ⋄ type←rt[rr]
-        ∨/(type≠1)∧type≠2:'Unsupported relocation type'⎕SIGNAL 200
-        kind←type-1
-        width←8 4[kind] ⋄ target←rh[rr] ⋄ offset←rx[rr] ⋄ targetz←hz[target]
+        ∨/~type∊1 2 4:'Unsupported relocation type'⎕SIGNAL 200
+        pc32←type∊2 4
+        width←8 4[pc32] ⋄ target←rh[rr] ⋄ offset←rx[rr] ⋄ targetz←hz[target]
         ∨/(offset>targetz)∨width>targetz-offset:'Relocation target outside section'⎕SIGNAL 200
         where←lx[target]+offset ⋄ S←ls[rs[rr]] ⋄ A←ra[rr] ⋄ P←la[target]+offset
-        value←S+A-P×pc32←kind=1
+        value←S+A-P×pc32
         ∨/pc32∧((value<¯1×2*31)∨value>¯1+2*31):'Relocation value overflow'⎕SIGNAL 200
 
         batchbytes←2*20 ⍝ avoid large allocation for temporary arrays.
