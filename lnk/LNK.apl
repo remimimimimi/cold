@@ -104,7 +104,7 @@ LNK←{o←PS∆ARGS ⍵
         ∨/size>az-68:'Archive symbol index outside archive view'⎕SIGNAL 200
 
         ⍝ The GNU/SysV index begins with big-endian u32 count.
-        count←{⊃U32 323⎕DR⌽(⊃fb[am[⍵]])[data[⍵]+⍳4]}¨⍳≢am
+        count←{256⊥(⊃fb[am[⍵]])[data[⍵]+⍳4]}¨⍳≢am
         ∨/size<4+4×count:'Invalid archive symbol index'⎕SIGNAL 200
 
         member←U32 323⎕DR,⌽(+/count)4⍴∊{(⊃fb[am[⍵]])[data[⍵]+4+⍳4×count[⍵]]}¨⍳≢am
