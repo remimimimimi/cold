@@ -239,10 +239,9 @@ LNK←{o←PS∆ARGS ⍵
         ⍝Selected ELF views: mapping, file offset, size
         (map data size)(picked,key)
     }
-    (selected picked)←SELECT s ⍬
 
     ⍝ Archive-member discovery step
-    STEP←{(files h s r symbase selected picked)←⍵
+    STEP←{(files h s r symbase selected picked)←⍵ ⋄ (selected picked)←SELECT s picked
         0=≢⊃selected:files h s r symbase selected picked
 
         (nfiles nh)←ELF fb selected ⋄ (ns nr nb)←TABLES nfiles nh
@@ -259,7 +258,8 @@ LNK←{o←PS∆ARGS ⍵
 
         files h s r symbase selected picked
     }
-    state←STEP files h s r symbase selected picked
+    DONE←{(files h s r symbase selected picked)←⍺ ⋄ 0=≢⊃selected}
+    state←STEP⍣DONE⊢files h s r symbase(⍬ ⍬ ⍬)⍬
     (files h s r symbase selected picked)←state
 
     (s seckeep)←COMDAT files h s symbase
