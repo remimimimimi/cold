@@ -107,16 +107,11 @@ LNK←{o←PS∆ARGS ⍵
         ∨/size>az-68:'Archive symbol index outside archive view'⎕SIGNAL 200
 
         ⍝ The GNU/SysV index begins with big-endian u32 count.
-        count←{256⊥256|(⊃fb[am[⍵]])[data[⍵]+⍳4]}¨⍳≢am
+        count←{⊃U32 323⎕DR⌽(⊃fb[am[⍵]])[data[⍵]+⍳4]}¨⍳≢am
         ∨/size<4+4×count:'Invalid archive symbol index'⎕SIGNAL 200
 
-        ⍝ Flatten all member offsets.
-        offbytes←∊{(⊃fb[am[⍵]])[data[⍵]+4+⍳4×count[⍵]]}¨⍳≢am
-        member←(256|(+/count)4⍴offbytes)+.×256*3 2 1 0 ⋄ owner←count/⍳≢am
-
-        ⍝ Flatten the NULL-terminated name regions.
-        namex←data+4+4×count ⋄ namez←size-(4+4×count)
-
+        member←U32 323⎕DR,⌽(+/count)4⍴∊{(⊃fb[am[⍵]])[data[⍵]+4+⍳4×count[⍵]]}¨⍳≢am
+        owner←count/⍳≢am ⋄ namex←data+4+4×count ⋄ namez←size-(4+4×count)
         pool←∊{(⊃fb[am[⍵]])[namex[⍵]+⍳namez[⍵]]}¨⍳≢am
         zeros←⍸pool=0 ⋄ start←0,1+¯1↓zeros ⋄ start←start/⍨start<≢pool ⋄ len←zeros-start
         ∨/(≢member)≠≢start:'Archive symbol-index count does not match its names'⎕SIGNAL 200
@@ -124,7 +119,7 @@ LNK←{o←PS∆ARGS ⍵
         ⍝ Names remain raw byte vectors.
         name←{pool[start[⍵]+⍳len[⍵]]}¨⍳≢start
         ⍝ archive mapping, member-header offset, symbol name
-        am[owner] member name
+        am[owner](ax[owner]+member)name
     }⍬
 
     (s r seckeep)←{
@@ -211,6 +206,37 @@ LNK←{o←PS∆ARGS ⍵
         }⍬
 
         s r seckeep
+    }⍬
+
+    ⍝ Select archive members required by direct objects
+    selected←{(fb view fh0 fhn)←files ⋄ (sn sb st so ss sv sz)←s ⋄ (am ax an)←archiveindex
+        0=≢am:⍬ ⍬ ⍬
+
+        strong←sb∊1 10 ⋄ defined←strong∧ss≠¯1 ⋄ undefined←strong∧ss=¯1
+        need←∪(undefined/sn)~defined/sn
+
+        ⍝ Select the first archive-index entry for each required name
+        rows←an⍳need ⋄ rows←rows/⍨rows<≢an
+        0=≢rows:⍬ ⍬ ⍬
+
+        ⍝ Several symbols can select the same archive member
+        key←am[rows],¨ax[rows] ⋄ rows←(≠key)/rows
+        map←am[rows] ⋄ off←ax[rows] ⋄ limit←≢¨fb[map]
+        ∨/(off>limit)∨60>limit-off:'Archive member header outside archive'⎕SIGNAL 200
+
+        mh←↑{(⊃fb[map[⍵]])[off[⍵]+⍳60]}¨⍳≢rows
+        ∨/~mh[;58 59]∧.=96 10:'Invalid archive member header'⎕SIGNAL 200
+
+        digit←mh[;48+⍳10]
+        size←{d←⍵/⍨⍵≠32
+            ∨/~d∊48+⍳10:'Invalid archive member size'⎕SIGNAL 200
+            10⊥d-48
+        }¨↓digit
+        data←off+60
+        ∨/size>limit-data:'Archive member data outside archive'⎕SIGNAL 200
+
+        ⍝Selected ELF views: mapping, file offset, size
+        map data size
     }⍬
 
     ⍝ Symbol resolution
