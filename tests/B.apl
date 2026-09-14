@@ -121,3 +121,9 @@ test_archive_duplicate←{
     archive←0 'test_archive_duplicate.a' Archive 'test_archive_duplicate.o' 'test_archive_duplicate.o'
     (expected start)←AssetPaths 'test_archive_duplicate.elf.expected' 'test_archive_start.o'
     expected CheckOutput start archive}
+
+test_lib_static←{
+    library←0 'libtest_lib_static.a' Archive 'test_archive_required.o'
+    (expected start)←AssetPaths 'test_lib_static.elf.expected' 'test_archive_start.o'
+    dir←⊃1⎕NPARTS library
+    expected CheckOutput start '-static' ('-L',dir) '-ltest_lib_static'}
