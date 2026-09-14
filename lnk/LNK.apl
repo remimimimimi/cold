@@ -43,8 +43,22 @@ ELF∆IDENT∆EXP←127 69 76 70 2 1 1 0 0
 LNK←{o←PS∆ARGS ⍵
     0=≢o.input: 'Expected at least one input file to link'⎕SIGNAL 200
 
+    ⍝ Resolve -l
+    paths←{
+        0=≢o.lib:o.input
+        0=≢o.path:'Cannot resolve libraries without -L'⎕SIGNAL 200
+
+        ext←o.static↓(⊂'.so'),⊂'.a'
+        o.input,{name←⍵
+            candidates←,o.path∘.{⍺,'/lib',name,⍵}ext
+            exists←⎕NEXISTS¨candidates
+            ~∨/exists:('Cannot find -l',name)⎕SIGNAL 200
+            ⊃candidates[exists⍳1]
+        }¨o.lib
+    }⍬
+
     ⍝ Map and classify inputs
-    (paths fb direct archives)←{paths←∪o.input ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
+    (paths fb direct archives)←{paths←⍵ ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
         ⍝ view mapping, offset, size
         vm←⍳≢fb ⋄ vx←fb≢⍛⍴0 ⋄ vz←≢¨fb
 
@@ -59,7 +73,7 @@ LNK←{o←PS∆ARGS ⍵
         archives←(ar/vm)(ar/vx)(ar/vz)(ar/thin)
 
         paths fb direct archives
-    }⍬
+    }paths
 
     ⍝ Decode a batch of ELF views
     ELF←{fb views←⍵ ⋄ (vm vx vz)←views
