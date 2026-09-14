@@ -116,3 +116,8 @@ test_archive_multi←{
     archive←0 'test_archive_multi.a' Archive 'test_archive_multi_member.o'
     (expected start)←AssetPaths 'test_archive_multi.elf.expected' 'test_archive_multi_start.o'
     expected CheckOutput start archive}
+
+test_archive_duplicate←{
+    archive←0 'test_archive_duplicate.a' Archive 'test_archive_duplicate.o' 'test_archive_duplicate.o'
+    (expected start)←AssetPaths 'test_archive_duplicate.elf.expected' 'test_archive_start.o'
+    expected CheckOutput start archive}
