@@ -207,18 +207,22 @@ LNK←{o←PS∆ARGS ⍵
     (s seckeep)←COMDAT files h s symbase
 
     ⍝ Select archive members required by direct objects
-    selected←{(fb view fh0 fhn)←files ⋄ (sn sb st so ss sv sz)←s ⋄ (am ax an)←archiveindex
-        0=≢am:⍬ ⍬ ⍬
+    SELECT←{s picked←⍵ ⋄ (fb view fh0 fhn)←files ⋄ (sn sb st so ss sv sz)←s ⋄ (am ax an)←archiveindex
+        0=≢am:(⍬ ⍬ ⍬)picked
 
         strong←sb∊1 10 ⋄ defined←strong∧ss≠¯1 ⋄ undefined←strong∧ss=¯1
         need←∪(undefined/sn)~defined/sn
 
         ⍝ Select the first archive-index entry for each required name
         rows←an⍳need ⋄ rows←rows/⍨rows<≢an
-        0=≢rows:⍬ ⍬ ⍬
+        0=≢rows:(⍬ ⍬ ⍬)picked
 
         ⍝ Several symbols can select the same archive member
-        key←am[rows],¨ax[rows] ⋄ rows←(≠key)/rows
+        key←am[rows],¨ax[rows]
+        first←≠key ⋄ rows←first/rows ⋄ key←first/key
+        new←~key∊picked ⋄ rows←new/rows ⋄ key←new/key
+        0=≢rows:(⍬ ⍬ ⍬)picked
+
         map←am[rows] ⋄ off←ax[rows] ⋄ limit←≢¨fb[map]
         ∨/(off>limit)∨60>limit-off:'Archive member header outside archive'⎕SIGNAL 200
 
@@ -234,8 +238,9 @@ LNK←{o←PS∆ARGS ⍵
         ∨/size>limit-data:'Archive member data outside archive'⎕SIGNAL 200
 
         ⍝Selected ELF views: mapping, file offset, size
-        map data size
-    }⍬
+        (map data size)(picked,key)
+    }
+    (selected picked)←SELECT s ⍬
 
     ⍝ Symbol resolution
     (r common startsym)←{(s r)←⍵ ⋄ (sn sb st so ss sv sz)←s ⋄ (rh rx rs rt ra)←r
