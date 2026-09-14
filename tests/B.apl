@@ -111,3 +111,8 @@ test_archive_thin_chain←{
     archive←1 'test_archive_thin_chain.a' Archive 'test_archive_chain_first.o' 'test_archive_chain_second.o'
     (expected start)←AssetPaths 'test_archive_thin_chain.elf.expected' 'test_archive_chain_start.o'
     expected CheckOutput start archive}
+
+test_archive_multi←{
+    archive←0 'test_archive_multi.a' Archive 'test_archive_multi_member.o'
+    (expected start)←AssetPaths 'test_archive_multi.elf.expected' 'test_archive_multi_start.o'
+    expected CheckOutput start archive}
