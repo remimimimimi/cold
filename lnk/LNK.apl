@@ -58,25 +58,30 @@ LNK←{o←PS∆ARGS ⍵
     }⍬
 
     ⍝ Map and classify inputs
-    (paths fb direct archives)←{paths←⍵ ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
+    (paths fb direct shared archives)←{paths←⍵ ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
         ⍝ view mapping, offset, size
         vm←⍳≢fb ⋄ vx←fb≢⍛⍴0 ⋄ vz←≢¨fb
 
         head←↑{64↑(⊃fb[vm[⍵]])[vx[⍵]+⍳64⌊vz[⍵]]}¨⍳≢vm
         elf←head[;⍳4]∧.=127 69 76 70
+        etype←head[;16]+256×head[;17]
+        ∨/elf∧~etype∊1 3:'Unsupported ELF file type'⎕SIGNAL 200
+        rel←elf∧etype=1 ⋄ dyn←elf∧etype=3
+
         thick←head[;⍳8]∧.=33 60 97 114 99 104 62 10
         thin←head[;⍳8]∧.=33 60 116 104 105 110 62 10
         ar←thick∨thin
         ∨/~elf∨ar:'Unsupported input file format'⎕SIGNAL 200
 
-        direct←(elf/vm)(elf/vx)(elf/vz)
+        direct←(rel/vm)(rel/vx)(rel/vz)
+        shared←(dyn/vm)(dyn/vx)(dyn/vz)
         archives←(ar/vm)(ar/vx)(ar/vz)(ar/thin)
 
-        paths fb direct archives
+        paths fb direct shared archives
     }paths
 
     ⍝ Decode a batch of ELF views
-    ELF←{fb views←⍵ ⋄ (vm vx vz)←views
+    ELF←{expected←⍺ ⋄ fb views←⍵ ⋄ (vm vx vz)←views
         head←↑{64↑(⊃fb[vm[⍵]])[vx[⍵]+⍳64⌊vz[⍵]]}¨⍳≢vm
         bad←~head[;⍳7]∧.=7↑ELF∆IDENT∆EXP
         bad∨←~head[;7]∊0 3 ⋄ bad∨←0≠head[;8]
@@ -84,7 +89,7 @@ LNK←{o←PS∆ARGS ⍵
 
         words←(≢vm)16⍴323⎕DR,head ⋄ meta←U32 words[;4]
         etype←65536|meta ⋄ emachine←⌊meta÷65536
-        1∨.≠etype:'One of the input files is not an object file'⎕SIGNAL 200
+        expected∨.≠etype:'One of the input files is not an object file'⎕SIGNAL 200
         62∨.≠emachine:'One of the input files is not for AMD64'⎕SIGNAL 200
 
         eshoff←words U64 10 ⋄ eshentsize←⌊(U32 words[;14])÷65536 ⋄ eshnum←65536|U32 words[;15]
@@ -98,7 +103,79 @@ LNK←{o←PS∆ARGS ⍵
         files←fb views fh0 eshnum
         h←hn ht hf hm hx hz ha he hl hi
         files h}
-    (files h)←ELF fb direct
+    (files h)←1 ELF fb direct
+    (sharedfiles sharedh)←{
+        0=≢⊃shared:(fb shared ⍬ ⍬)(10⍴⊂⍬)
+        3 ELF fb shared
+    }⍬
+
+    ⍝ Decode visible definitions exported by shared objects
+    (ds soname needed)←{(hn ht hf hm hx hz ha he hl hi)←sharedh ⋄ (fb view fh0 fhn)←sharedfiles ⋄ (vm vx vz)←view
+        0=≢vm:(7⍴⊂⍬)⍬(⍬ ⍬)
+
+        symsh←⍸ht=11
+        (≢vm)≠≢symsh:'Expected one dynamic symbol table per shared object'⎕SIGNAL 200
+        symobj←hm[symsh] ⋄ symz←hz[symsh]
+        (⍳≢vm)≢symobj:'Dynamic symbol tables are not one per shared object'⎕SIGNAL 200
+        24∨.≠he[symsh]:'Unexpected dynamic symbol entry size'⎕SIGNAL 200
+        0∨.≠24|symz:'Invalid dynamic symbol table size'⎕SIGNAL 200
+
+        words←(+/count←symz÷24)6⍴323⎕DR∊(vx[symobj]+hx[symsh]+⍳¨symz)(⊂⍛⌷)¨fb[vm[symobj]]
+
+        sn←U32 words[;0]
+        info←256|words[;1] ⋄ other←256|⌊words[;1]÷256
+        sb←⌊info÷16 ⋄ st←16|info ⋄ so←4|other
+        shndx←65536|⌊words[;1]÷65536
+        (sv sz)←words∘U64¨2 4
+
+        own←count/⍳≢count ⋄ obj←symobj[own] ⋄ keep←(sb∊1 2 10)∧shndx≠0∧so∊0 3
+
+        strsh←fh0[symobj]+hl[symsh]
+        hm[strsh]∨.≠symobj:'Dynamic symbol table links outside its shared object'⎕SIGNAL 200
+        strz←hz[strsh] ⋄ strstart←¯1↓+\0,strz
+        strpool←∊(vx[symobj]+hx[strsh]+⍳¨strz)(⊂⍛⌷)¨fb[vm[symobj]]
+
+        nameat←strstart[own]+sn
+        sn∨.≥strz[own]:'Dynamic symbol name outside string table'⎕SIGNAL 200
+        0∨.≠strpool[strstart+strz-1]:'Invalid dynamic string table'⎕SIGNAL 200
+        zeros←⍸strpool=0
+        namelen←zeros[(zeros⍸nameat)+0≠strpool[nameat]]-nameat
+        name←{0=≢⍵:⍬ ⋄ {strpool[nameat[⍵]+⍳namelen[⍵]]}¨⍵}⍸keep
+
+        ⍝ Shared object, name, binding, type, visibility, value, size
+        exports←(obj[keep])name(sb/⍨keep)(st/⍨keep)(so/⍨keep)(sv/⍨keep)(sz/⍨keep)
+
+        ⍝ Decode dynamic entries
+        dynsh←⍸ht=6
+        (≢vm)≠≢dynsh:'Expected one dynamic section per shared object'⎕SIGNAL 200
+        dynobj←hm[dynsh] ⋄ dynz←hz[dynsh]
+        (⍳≢vm)≢dynobj:'Dynamic sections are not one per shared object'⎕SIGNAL 200
+        16∨.≠he[dynsh]:'Unexpected dynamic entry size'⎕SIGNAL 200
+        0∨.≠16|dynz:'Invalid dynamic section size'⎕SIGNAL 200
+
+        dwords←(+/dcount←dynz÷16)4⍴323⎕DR∊(vx[dynobj]+hx[dynsh]+⍳¨dynz)(⊂⍛⌷)¨fb[vm[dynobj]]
+        tag←dwords U64 0 ⋄ value←dwords U64 2 ⋄ down←dcount/⍳≢dcount
+
+        dstrsh←fh0[dynobj]+hl[dynsh]
+        dstrsh∨.≠strsh:'Dynamic and dynamic-symbol tables use different string tables'⎕SIGNAL 200
+
+        NAMES←{owner←⍺ ⋄ offset←⍵ ⋄ 0=≢owner:⍬
+            offset∨.≥strz[owner]:'Dynamic string offset outside string table'⎕SIGNAL 200
+            at←strstart[owner]+offset ⋄ len←zeros[(zeros⍸at)+0≠strpool[at]]-at
+            {strpool[at[⍵]+⍳len[⍵]]}¨⍳≢at}
+
+        sr←⍸tag=14
+        (≢vm)≠≢sr:'Expected one SONAME per shared object'⎕SIGNAL 200
+        sowner←dynobj[down[sr]]
+        (⍳≢vm)≢sowner:'SONAME entries are not one per shared object'⎕SIGNAL 200
+        soname←sowner NAMES value[sr]
+
+        nr←⍸tag=1
+        nowner←dynobj[down[nr]]
+        needed←nowner(nowner NAMES value[nr])
+
+        exports soname needed
+    }⍬
 
     ⍝ Decode GNU archive symbol indexes
     archiveindex←{(am ax az at)←archives ⋄ (fb view fh0 fhn)←files
@@ -309,7 +386,7 @@ LNK←{o←PS∆ARGS ⍵
         0=≢⊃selected:files h s r symbase selected picked
 
         (ofb ov ofh0 ofhn)←files ⋄ fb←ofb,newfb
-        (nfiles nh)←ELF fb selected ⋄ (ns nr nb)←TABLES nfiles nh
+        (nfiles nh)←1 ELF fb selected ⋄ (ns nr nb)←TABLES nfiles nh
         (ovm ovx ovz)←ov ⋄ (nfb nv nfh0 nfhn)←nfiles ⋄ (nvm nvx nvz)←nv
         vbase←≢ovm ⋄ hbase←≢⊃h ⋄ sbase←≢⊃s
 
