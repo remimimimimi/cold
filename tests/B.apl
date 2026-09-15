@@ -127,3 +127,8 @@ test_lib_static←{
     (expected start)←AssetPaths 'test_lib_static.elf.expected' 'test_archive_start.o'
     dir←⊃1⎕NPARTS library
     expected CheckOutput start '-static' ('-L',dir) '-ltest_lib_static'}
+
+test_dso_decode←{
+    library←'libtest_dso_decode.so' Shared 'test_archive_required.o'
+    (expected start)←AssetPaths 'test_dso_decode.elf.expected' 'test_norela_start.o'
+    expected CheckOutput start library}
