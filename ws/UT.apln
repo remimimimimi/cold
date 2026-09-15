@@ -49,6 +49,17 @@ Archive←{thin name←⍺ ⋄ members←⊆⍵
     0 0≢result[2 3]:('Cannot build archive ',path,': ',⍕result)⎕SIGNAL 11
     path}
 
+Shared←{name←⍺ ⋄ objects←AssetPaths ⊆⍵
+    assets←(ProjectRoot⍬),'/tests/assets/'
+    path←assets,'.data/',name
+    ⎕NEXISTS path:path
+
+    _←3 ⎕MKDIR assets,'.data/'
+    cmd←'ld -shared -soname "',name,'" -o "',path,'" ',∊{'"',⍵,'" '}¨objects
+    result←⎕SHELL cmd
+    0 0≢result[2 3]:('Cannot build shared object ',path,': ',⍕result)⎕SIGNAL 11
+    path}
+
 CheckOutput←{expected←⍺ ⋄ args←⍵
     '/'≢⊃expected:'Expected output must be an absolute path'⎕SIGNAL 11
 
@@ -97,7 +108,7 @@ Run←{
     _←{0≠⎕NC'#.isolate':⍬ ⋄ #.⎕CY'isolate'}⍬
     root←ProjectRoot ⍬
     _←#.LOAD root
-    _←#.cold.⎕FX¨⎕CR¨'ProjectRoot' 'ResolveAsset' 'AssetPaths' 'Archive' 'CheckOutput' 'RunOne'
+    _←#.cold.⎕FX¨⎕CR¨'ProjectRoot' 'ResolveAsset' 'AssetPaths' 'Archive' 'Shared' 'CheckOutput' 'RunOne'
     #.cold.PROJECT_ROOT←root
     #.cold.TMP_ROOT←TMP_ROOT
 
