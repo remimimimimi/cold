@@ -26,6 +26,12 @@ test_script_nested_asneeded←{
     expected←('a.o' 'b.so' 'c.so' 'd.a')(0 1 1 0)
     expected AssertMatch SCRIPT 'INPUT(a.o AS_NEEDED(b.so, c.so) d.a)'}
 
+test_script_link←{
+    archive←0 'libtest_script_link.a' Archive 'test_archive_required.o'
+    (expected start script)←AssetPaths 'test_script_link.elf.expected' 'test_archive_start.o' 'test_script_link.ld'
+    dir←⊃1⎕NPARTS archive
+    expected CheckOutput start script('-L',dir)}
+
 test_script_reject_unbalanced←{
     failed←{0::1 ⋄ _←SCRIPT 'INPUT(a.o' ⋄ 0}⍬
     1 AssertMatch failed}

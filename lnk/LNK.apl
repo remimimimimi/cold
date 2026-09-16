@@ -23,7 +23,7 @@ PS∆ARGS←{args←⍵
     o.(static pie)←'-static' '-pie'∊args
     o.input←args/⍨'-'≠⊃¨args ⋄ o}
 
-SCRIPT←{src←' '@{'/*'∘(≠\⍷∨¯1⌽∘⌽⍷∘⌽)⍵}⊢⍵
+SCRIPT←{0=≢⍵:⍬ ⍬ ⋄ src←' '@{'/*'∘(≠\⍷∨¯1⌽∘⌽⍷∘⌽)⍵}⊢⍵
     atom←~src∊' ,;()',⎕UCS 9 10 13 ⋄ paren←src∊'()'
     begin←paren∨(0,¯1↓atom)<atom
     tokens←((+\begin)×(atom∨paren))⊆src
@@ -79,7 +79,18 @@ LNK←{o←PS∆ARGS ⍵
             ~∨/exists←⎕NEXISTS¨candidates:('Cannot find ',⍵)⎕SIGNAL 200
             (exists⍳1)⊃candidates
         }¨lib/spec)@{lib}⊢spec}
-    paths←RESOLVE o.input,('-l'∘,¨o.lib)
+    spec←o.input,('-l'∘,¨o.lib)
+    paths optional←2↑{done doneopt spec specopt←⍵
+        paths←RESOLVE spec ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths ⋄ head←↑64∘↑¨fb
+
+        elf←head[;⍳4]∧.=127 69 76 70
+        thick←head[;⍳8]∧.=33 60 97 114 99 104 62 10
+        thin←head[;⍳8]∧.=33 60 116 104 105 110 62 10
+        parsed←{SCRIPT ⎕UCS 256|⍵}¨(0⍴⊂⍬),fb/⍨script←~binary←elf∨thick∨thin
+        (members asneeded)←,⌿↑parsed,⊂⍬ ⍬ ⋄ count←{≢⊃⍵}¨parsed
+
+        (done,binary/paths)(doneopt,binary/specopt)members((count/script/specopt)∨asneeded)
+    }⍣{0=≢2⊃⍺}⊢⍬ ⍬ spec(spec≢⍛⍴0)
 
     ⍝ Map and classify inputs
     (paths fb direct shared archives)←{paths←⍵ ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
