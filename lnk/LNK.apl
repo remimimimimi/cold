@@ -80,40 +80,30 @@ LNK←{o←PS∆ARGS ⍵
             (exists⍳1)⊃candidates
         }¨lib/spec)@{lib}⊢spec}
     spec←o.input,('-l'∘,¨o.lib)
-    paths optional←2↑{done doneopt spec specopt←⍵
-        paths←RESOLVE spec ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths ⋄ head←↑64∘↑¨fb
+    paths fb kind thin optional←5↑{done maps kind thins doneopt spec specopt←⍵
+        paths←RESOLVE spec ⋄ mapped←{83 ¯1⎕MAP⍵'R'}¨paths ⋄ head←↑64∘↑¨mapped
 
-        elf←head[;⍳4]∧.=127 69 76 70
-        thick←head[;⍳8]∧.=33 60 97 114 99 104 62 10
-        thin←head[;⍳8]∧.=33 60 116 104 105 110 62 10
-        parsed←{SCRIPT ⎕UCS 256|⍵}¨(0⍴⊂⍬),fb/⍨script←~binary←elf∨thick∨thin
-        (members asneeded)←,⌿↑parsed,⊂⍬ ⍬ ⋄ count←{≢⊃⍵}¨parsed
-
-        (done,binary/paths)(doneopt,binary/specopt)members((count/script/specopt)∨asneeded)
-    }⍣{0=≢2⊃⍺}⊢⍬ ⍬ spec(spec≢⍛⍴0)
-
-    ⍝ Map and classify inputs
-    (paths fb direct shared archives)←{paths←⍵ ⋄ fb←{83 ¯1⎕MAP⍵'R'}¨paths
-        ⍝ view mapping, offset, size
-        vm←⍳≢fb ⋄ vx←fb≢⍛⍴0 ⋄ vz←≢¨fb
-
-        head←↑{64↑(⊃fb[vm[⍵]])[vx[⍵]+⍳64⌊vz[⍵]]}¨⍳≢vm
         elf←head[;⍳4]∧.=127 69 76 70
         etype←head[;16]+256×head[;17]
-        ∨/elf∧~etype∊1 3:'Unsupported ELF file type'⎕SIGNAL 200
-        rel←elf∧etype=1 ⋄ dyn←elf∧etype=3
+        elf∨.∧~etype∊1 3:'Unsupported ELF file type'⎕SIGNAL 200
 
         thick←head[;⍳8]∧.=33 60 97 114 99 104 62 10
         thin←head[;⍳8]∧.=33 60 116 104 105 110 62 10
-        ar←thick∨thin
-        ∨/~elf∨ar:'Unsupported input file format'⎕SIGNAL 200
+        script←~binary←elf∨archive←thick∨thin
 
-        direct←(rel/vm)(rel/vx)(rel/vz)
-        shared←(dyn/vm)(dyn/vx)(dyn/vz)
-        archives←(ar/vm)(ar/vx)(ar/vz)(ar/thin)
+        parsed←{SCRIPT ⎕UCS 256|⍵}¨(0⍴⊂⍬),script/mapped
+        (members asneeded)←,⌿↑parsed,⊂⍬ ⍬ ⋄ count←{≢⊃⍵}¨parsed
 
-        paths fb direct shared archives
-    }paths
+        kept←binary∘/¨paths mapped(etype×elf)thin specopt
+        ((done maps kind thins doneopt),¨kept),members((count/script/specopt)∨asneeded)
+    }⍣{0=≢5⊃⍺}⊢⍬ ⍬ ⍬ ⍬ ⍬ spec(spec≢⍛⍴0)
+
+    ⍝ Classify inputs
+    vm←⍳≢fb ⋄ vx←fb≢⍛⍴0 ⋄ vz←≢¨fb
+    rel←kind=1 ⋄ dyn←kind=3 ⋄ ar←kind=0
+    direct←(rel/vm)(rel/vx)(rel/vz)
+    shared←(dyn/vm)(dyn/vx)(dyn/vz)
+    archives←(ar/vm)(ar/vx)(ar/vz)(ar/thin)
 
     ⍝ Decode a batch of ELF views
     ELF←{expected←⍺ ⋄ fb views←⍵ ⋄ (vm vx vz)←views
