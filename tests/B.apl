@@ -1,6 +1,43 @@
 ⍝ Basic correctness tests
 AssertMatch←{⍺≢⍵:('Expected ',(⍕⍺),', got ',⍕⍵)⎕SIGNAL 11 ⋄ 1}
 
+test_script_input←{
+    expected←('a.o' 'libx.a')(0 0)
+    expected AssertMatch SCRIPT 'INPUT(a.o, libx.a)'}
+
+test_script_group_asneeded←{
+    expected←('a.o' '-lc' '-lm')(0 1 0)
+    expected AssertMatch SCRIPT 'GROUP(a.o AS_NEEDED(-lc) -lm)'}
+
+test_script_multiple_commands←{
+    expected←('a.a' 'b.a' 'c.a' 'd.a')(0 0 0 0)
+    expected AssertMatch SCRIPT 'GROUP(a.a b.a) INPUT(c.a) GROUP(d.a)'}
+
+test_script_output_format←{
+    expected←('a.o' '-lc' '-lm')(0 1 0)
+    expected AssertMatch SCRIPT 'OUTPUT_FORMAT(elf64-x86-64) GROUP(a.o AS_NEEDED(-lc) -lm)'}
+
+test_script_comments←{
+    expected←('a-file.o' 'b.o' 'c.o')(0 0 0)
+    source←'/* INPUT(ignored.o) */ INPUT(a-file.o, b.o); /* x */ INPUT(c.o)'
+    expected AssertMatch SCRIPT source}
+
+test_script_nested_asneeded←{
+    expected←('a.o' 'b.so' 'c.so' 'd.a')(0 1 1 0)
+    expected AssertMatch SCRIPT 'INPUT(a.o AS_NEEDED(b.so, c.so) d.a)'}
+
+test_script_reject_unbalanced←{
+    failed←{0::1 ⋄ _←SCRIPT 'INPUT(a.o' ⋄ 0}⍬
+    1 AssertMatch failed}
+
+test_script_reject_unknown←{
+    failed←{0::1 ⋄ _←SCRIPT 'SECTIONS { .text : { *(.text) } }' ⋄ 0}⍬
+    1 AssertMatch failed}
+
+test_script_reject_top_asneeded←{
+    failed←{0::1 ⋄ _←SCRIPT 'AS_NEEDED(libx.so)' ⋄ 0}⍬
+    1 AssertMatch failed}
+
 test_layout_empty←{
     expected←⍬ ⍬ 0
     expected AssertMatch LAYOUT ⍬ ⍬ ⍬}

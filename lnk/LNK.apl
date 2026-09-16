@@ -23,6 +23,30 @@ PS∆ARGS←{args←⍵
     o.(static pie)←'-static' '-pie'∊args
     o.input←args/⍨'-'≠⊃¨args ⋄ o}
 
+SCRIPT←{src←' '@{'/*'∘(≠\⍷∨¯1⌽∘⌽⍷∘⌽)⍵}⊢⍵
+    atom←~src∊' ,;()',⎕UCS 9 10 13 ⋄ paren←src∊'()'
+    begin←paren∨(0,¯1↓atom)<atom
+    tokens←((+\begin)×(atom∨paren))⊆src
+    first←⊃¨tokens ⋄ t←'('(-⍥(first∘=))')' ⋄ d←+\t ⋄ b←d-t
+    (0>⌊/0,d)∨0≠⊢/0,d:'Unbalanced linker-script parentheses'⎕SIGNAL 200
+
+    o←⍸t=1
+    0=≢o:'Linker script contains no supported inputs'⎕SIGNAL 200
+    0∨.≠(1,t)[o]:'Expected command before ('⎕SIGNAL 200
+    cmd←1⎕C tokens[o-1]
+    ~∧/cmd∊'INPUT' 'GROUP' 'AS_NEEDED' 'OUTPUT_FORMAT':'Unsupported linker-script command'⎕SIGNAL 200
+    (cmd∊⊂'AS_NEEDED')∨.∧b[o]=0:'AS_NEEDED must be inside INPUT or GROUP'⎕SIGNAL 200
+    (cmd∊'INPUT' 'GROUP' 'OUTPUT_FORMAT')∨.∧b[o]≠0:'Nested linker-script command'⎕SIGNAL 200
+
+    command←1@(o-1)⊢t≢⍛⍴0
+    command∨.<(t=0)∧b=0:'Unexpected text outside linker-script command'⎕SIGNAL 200
+    top←o/⍨b[o]=0 ⋄ topcmd←cmd/⍨b[o]=0
+    owner←+\1@top⊢t≢⍛⍴0
+
+    rows←command<(t=0)∧(b>0)∧owner⊂⍛⌷0,topcmd∊'INPUT' 'GROUP'
+    ~∨/rows:'Linker script contains no supported inputs'⎕SIGNAL 200
+    (rows/tokens)(rows/b>1)}
+
 LAYOUT←{group size align←⍵ ⋄ ⍺←0 ⍝ optional origin
     0=n←≢size:⍬ ⍬ ⍺
     p←⍋group ⋄ g←group[p] ⋄ s←size[p] ⋄ a←align[p]
