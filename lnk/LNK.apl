@@ -407,7 +407,8 @@ LNK←{o←PS∆ARGS ⍵
     }
 
     ⍝ Archive-member discovery step
-    STEP←{(files h s r symbase selected picked)←⍵ ⋄ (selected newfb picked)←SELECT files s picked
+    (files h s r symbase selected picked)←{(files h s r symbase selected picked)←⍵
+        (selected newfb picked)←SELECT files s picked
         0=≢⊃selected:files h s r symbase selected picked
 
         (ofb ov ofh0 ofhn)←files ⋄ fb←ofb,newfb
@@ -423,10 +424,7 @@ LNK←{o←PS∆ARGS ⍵
         h←h,¨nh ⋄ s←s,¨ns ⋄ r←r,¨nr ⋄ symbase,←nb
 
         files h s r symbase selected picked
-    }
-    DONE←{(files h s r symbase selected picked)←⍺ ⋄ 0=≢⊃selected}
-    state←STEP⍣DONE⊢files h s r symbase(⍬ ⍬ ⍬)⍬
-    (files h s r symbase selected picked)←state
+    }⍣{(_ _ _ _ _ selected _)←⍺ ⋄ 0=≢⊃selected}⊢files h s r symbase(⍬ ⍬ ⍬)⍬
 
     (s seckeep)←COMDAT files h s symbase
 
