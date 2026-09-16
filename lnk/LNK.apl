@@ -431,7 +431,9 @@ LNK←{o←PS∆ARGS ⍵
     (s seckeep)←COMDAT files h s symbase
 
     ⍝ Symbol resolution
-    (r common startsym)←{(s r)←⍵ ⋄ (sn sb st so ss sv sz)←s ⋄ (rh rx rs rt ra)←r
+    (r ri imports common startsym)←{(s ds r)←⍵ ⋄ (rh rx rs rt ra)←r
+        (sn sb st so ss sv sz)←s ⋄ (dobj dn db dt dvis dv dz)←ds
+
         reg←ss≥0 ⋄ abs←ss=¯2 ⋄ com←ss=¯3
         weak←sb=2 ⋄ strong←(sb=1)∨sb=10 ⋄ ext←strong∨weak
         defd←reg∨abs∨com
@@ -442,11 +444,25 @@ LNK←{o←PS∆ARGS ⍵
 
         zero←≢sn ⋄ byname←def@(sid[def])⊢(≢names)⍴zero
 
-        rdef←rs ⋄ rows←⍸ext[rdef] ⋄ refs←rdef[rows] ⋄ resolved←byname[sid[refs]]
-        missing←resolved=zero ⋄ required←(~weak[refs])∨0≠so[refs]
+        ⍝ Resolve external symbol rows against objects, then DSOs.
+        erow←⍸ext∧~defd ⋄ local←byname[sid[erow]] ⋄ drow←dn⍳sn[erow]
+        dynamic←(local=zero)∧drow<≢dn ⋄ missing←(local=zero)∧~dynamic ⋄ required←weak[erow]⍲0=so[erow]
         ∨/missing∧required:'Undefined symbol'⎕SIGNAL 200
 
-        rdef[rows]←resolved ⋄ real←rdef≠zero
+        ⍝ Deduplicate imports in first-occurence order.
+        isym←dynamic/erow ⋄ idrow←dynamic/drow
+        in←∪sn[isym] ⋄ ii←in⍳sn[isym]
+        idrow←idrow[ii⍳⍳≢in]
+        imports←in db[idrow] dobj[idrow] dt[idrow] dz[idrow]
+
+        ⍝ Map symbol rows and then relocations to imports.
+        simport←ii@isym⊢sn≢⍛⍴¯1 ⋄ ri←simport[rs]
+
+        ⍝ Redirect locally resolved relocation symbols.
+        rdef←rs ⋄ refs←rdef[rows←⍸ext[rdef]]
+        resolved←byname[sid[refs]] ⋄ imported←simport[refs]≥0
+        rdef←zero@(imported/rows)⊢resolved@rows⊢rdef
+        real←rdef≠zero
         ∨/(usedtype←st[real/rdef])=6:'TLS symbol relocation is not supported yet'⎕SIGNAL 200
         ∨/usedtype=10:'GNU IFUNC relocation is not supported yet'⎕SIGNAL 200
 
@@ -464,8 +480,8 @@ LNK←{o←PS∆ARGS ⍵
         ca←(cid{⌈/⍵}⌸sv[crow])@ids⊢(≢cdef)⍴1
 
         r←rh rx rdef rt ra ⋄ common←cdef cz ca
-        r common startsym
-    }s r
+        r ri imports common startsym
+    }s ds r
 
     ⍝ Layout
     base←4194304
