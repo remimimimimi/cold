@@ -631,13 +631,19 @@ LNK←{o←PS∆ARGS ⍵
     ⍝ Write dynamic sections
     _←{(hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab)←dynparts
         ~hasdynamic:⍬
-        (lx la ls lfz lmz le ld)←layout ⋄ (dx da)←ld
+        (lx la ls lfz lmz le ld)←layout ⋄ (dx da)←ld ⋄ (dkeep nx dynstr dynsym)←dynamic
         parts←interp hash dynsym dynstr
         rows←0 2 3 4
         _←rows{p←⍺ ⋄ r←⍵
-            ⍝BREAK
             out[dx[p]+⍳≢⊃parts[r]]←⊃parts[r]
         ⍬}¨⍳≢rows
+
+        tags←(nx≢⍛⍴1),4 5 6 10 11 3 2 20 23 7 8 9 24 0
+        values←nx,da[2 4 3],(≢dynstr),24,da[7],(≢relaplt),7,da[5 6],(≢dynrela),24 0 0
+
+        at←16×⍳≢tags
+        dyntab[,at∘.+⍳8]←8SB tags ⋄ dyntab[,at∘.+8+⍳8]←8SB values
+        out[dx[8]+⍳≢dyntab]←dyntab
     ⍬}⍬
 
     ⍝ Apply static relocations
