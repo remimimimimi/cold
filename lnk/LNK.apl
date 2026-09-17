@@ -531,7 +531,8 @@ LNK←{o←PS∆ARGS ⍵
         strings←in,neededname ⋄ x←1+¯1↓+\0,len←1+≢¨strings
         ix←in≢⍛↑x ⋄ nx←in≢⍛↓x ⋄ dynstr←0,∊{⍵,0}¨strings
         n←≢in ⋄ at←24+24×⍳n
-        dynsym←(8SB iz)@(,at∘.+16+⍳8)⊢(it+16×ib)@(at+4)⊢(4SB ix)@(,at∘.+⍳4)⊢(24×1+n)⍴0
+        info←it+16×ib ⋄ info←info-256×info≥128
+        dynsym←(8SB iz)@(,at∘.+16+⍳8)⊢info@(at+4)⊢(4SB ix)@(,at∘.+⍳4)⊢(24×1+n)⍴0
 
         dkeep nx dynstr dynsym
     }imports dplan
