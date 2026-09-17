@@ -511,7 +511,7 @@ LNK←{o←PS∆ARGS ⍵
         strings←in,neededname ⋄ x←1+¯1↓+\0,len←1+≢¨strings
         ix←in≢⍛↑x ⋄ nx←in≢⍛↓x ⋄ dynstr←0,∊{⍵,0}¨strings
         n←≢in ⋄ at←24+24×⍳n
-        dynsym←(8SB iz)@(,at∘.+16+⍳8)⊢(16×ib+it)@(at+4)⊢(4SB ix)@(,at∘.+⍳4)⊢(24×1+n)⍴0
+        dynsym←(8SB iz)@(,at∘.+16+⍳8)⊢(it+16×ib)@(at+4)⊢(4SB ix)@(,at∘.+⍳4)⊢(24×1+n)⍴0
 
         dkeep nx dynstr dynsym
     }imports dplan
@@ -526,7 +526,7 @@ LNK←{o←PS∆ARGS ⍵
         hash←4SB 1 ndynsym(×≢in),(2+⍳0⌈(≢in)-1)@(1+⍳0⌈(≢in)-1)⊢0⍴⍨ndynsym←1+≢in
 
         plt←0⍴⍨16×nplt ⋄ relaplt←0⍴⍨24×nplt ⋄ dynrela←0⍴⍨24×nrela
-        got←0⍴⍨8×nplt+nglob+nlocal ⋄ dyntab←0⍴⍨16×14+≢nx
+        got←0⍴⍨8×nplt+nglob+nlocal ⋄ dyntab←0⍴⍨16×12+(3××nrela)+≢nx
 
         hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab
     }imports dplan dynamic
@@ -664,13 +664,14 @@ LNK←{o←PS∆ARGS ⍵
         dynrela←RELA(⊂off),(⊂info),⊂add
 
         localvalue←ls[localgotsym]×~o.pie
-        got←(0⍴⍨0×nplt+nglob),8 SB localvalue
+        got←(0⍴⍨8×nplt+nglob),8 SB localvalue
 
         out[dx[1]+⍳≢plt]←plt ⋄ out[dx[5]+⍳≢relaplt]←relaplt
         out[dx[6]+⍳≢dynrela]←dynrela ⋄ out[dx[7]+⍳≢got]←got
 
-        tags←(nx≢⍛⍴1),4 5 6 10 11 3 2 20 23 7 8 9 24 0
-        values←nx,da[2 4 3],(≢dynstr),24,da[7],(≢relaplt),7,da[5 6],(≢dynrela),24 0 0
+        hasrela←0<≢dynrela
+        tags←(nx≢⍛⍴1),4 5 6 10 11 3 2 20 23,(hasrela/7 8 9),30 1879048187 0
+        values←nx,da[2 4 3],(≢dynstr),24,da[7],(≢relaplt),7,da[5],(hasrela/da[6](≢dynrela)24),8 1 0
 
         at←16×⍳≢tags
         dyntab[,at∘.+⍳8]←8SB tags ⋄ dyntab[,at∘.+8+⍳8]←8SB values
