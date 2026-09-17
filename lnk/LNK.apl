@@ -463,8 +463,7 @@ LNK←{o←PS∆ARGS ⍵
         resolved←byname[sid[refs]] ⋄ imported←simport[refs]≥0
         rdef←zero@(imported/rows)⊢resolved@rows⊢rdef
         real←rdef≠zero
-        ∨/(usedtype←st[real/rdef])=6:'TLS symbol relocation is not supported yet'⎕SIGNAL 200
-        ∨/usedtype=10:'GNU IFUNC relocation is not supported yet'⎕SIGNAL 200
+        ∨/st[real/rdef]=10:'GNU IFUNC relocation is not supported yet'⎕SIGNAL 200
 
         ⍝ Identify entry point
         start←names⍳⊂83⎕DR'_start'
@@ -488,24 +487,24 @@ LNK←{o←PS∆ARGS ⍵
         backed←(ht≠8)∧2|⌊hf÷2 ⋄ live←seckeep[rh]∧backed[rh] ⋄ imported←ri≥0 ⋄ gottypes←9 41 42
 
         use←live∧imported
-        ∨/use∧~rt∊1 4,gottypes:'Unsupported dynamic relocation type'⎕SIGNAL 200
+        ∨/use∧~rt∊1 4 19,gottypes:'Unsupported dynamic relocation type'⎕SIGNAL 200
 
         pltimport←∪ri/⍨use∧rt=4 ⋄ gotimport←∪ri/⍨use∧rt∊gottypes
         zero←≢⊃s
         localgotsym←∪rs/⍨live∧(~imported)∧(rs≠zero)∧rt∊gottypes
+        gdimport←∪ri/⍨use∧rt=19 ⋄ hasld←live∨.∧rt=20
 
         symbolic←⍸use∧rt=1 ⋄ relative←⍸o.pie∧live∧(~imported)∧(rs≠zero)∧rt=1
 
-        ip←(⍳≢pltimport)@pltimport⊢in≢⍛⍴¯1
-        ig←(⍳≢gotimport)@gotimport⊢in≢⍛⍴¯1
-        lg←(⍳≢localgotsym)@localgotsym⊢(≢⊃s)⍴¯1
+        ip←(⍳≢pltimport)@pltimport⊢in≢⍛⍴¯1 ⋄ ig←(⍳≢gotimport)@gotimport⊢in≢⍛⍴¯1
+        lg←(⍳≢localgotsym)@localgotsym⊢(≢⊃s)⍴¯1 ⋄ igt←(⍳≢gdimport)@gdimport⊢in≢⍛⍴¯1
 
-        pltimport gotimport localgotsym symbolic relative ip ig lg
+        pltimport gotimport localgotsym gdimport hasld symbolic relative ip ig lg igt
     }h r ri imports
 
     ⍝ Dynamic symbols and strings
     dynamic←{(imports dplan)←⍵ ⋄ (in ib idso it iz)←imports ⋄ (sm sx sz)←shared
-        (pltimport gotimport localgotsym symbolic relative ip ig lg)←dplan
+        (pltimport gotimport localgotsym gdimport hasld symbolic relative ip ig lg igt)←dplan
 
         used←(⍳≢sm)∊idso ⋄ dkeep←used∨~optional[sm] ⋄ neededname←dkeep/soname
 
@@ -529,16 +528,18 @@ LNK←{o←PS∆ARGS ⍵
 
     ⍝ Generated dynamic sections
     dynparts←{(imports dplan dynamic)←⍵ ⋄ (in ib idso it iz)←imports ⋄ (dkeep nx dynstr dynsym)←dynamic
-        (pltimport gotimport localgotsym symbolic relative ip ig lg)←dplan ⋄ (initrow finirow initsec finisec)←life
+        (pltimport gotimport localgotsym gdimport hasld symbolic relative ip ig lg igt)←dplan
+        (initrow finirow initsec finisec)←life
         nlife←(initrow≥0)+(finirow≥0)+2×(0<≢initsec)+0<≢finisec
-        (nplt nglob nlocal)←≢¨pltimport gotimport localgotsym
-        nrela←nglob+(o.pie×nlocal)+(≢symbolic)+≢relative
+        (nplt nglob ngd nlocal)←≢¨pltimport gotimport gdimport localgotsym ⋄ ntlsdesc←hasld+ngd
+
+        nrela←nglob+(o.pie×nlocal)+(≢symbolic)+(≢relative)+ntlsdesc+ngd
         hasdynamic←∨/dkeep
         interp←83⎕DR o.interp,⎕UCS 0
         hash←4SB 1 ndynsym(×≢in),(2+⍳0⌈(≢in)-1)@(1+⍳0⌈(≢in)-1)⊢0⍴⍨ndynsym←1+≢in
 
         plt←0⍴⍨16×nplt ⋄ relaplt←0⍴⍨24×nplt ⋄ dynrela←0⍴⍨24×nrela
-        got←0⍴⍨8×nplt+nglob+nlocal ⋄ dyntab←0⍴⍨16×12+nlife+(3××nrela)+≢nx
+        got←0⍴⍨8×nplt+nglob+nlocal+2×ntlsdesc ⋄ dyntab←0⍴⍨16×12+nlife+(3××nrela)+≢nx
 
         hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab
     }imports dplan dynamic
@@ -666,8 +667,8 @@ LNK←{o←PS∆ARGS ⍵
     _←{(hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab)←dynparts
         ~hasdynamic:⍬
         (lx la ls lfz lmz le ld)←layout ⋄ (dx da)←ld ⋄ (dkeep nx dynstr dynsym)←dynamic
-        (pltimport gotimport localgotsym symbolic relative ip ig lg)←dplan ⋄ (rh rx rs rt ra)←r
-        (hn ht hf hm hx hz ha he hl hi)←h ⋄ (initrow finirow initsec finisec)←life
+        (pltimport gotimport localgotsym gdimport hasld symbolic relative ip ig lg igt)←dplan
+        (rh rx rs rt ra)←r ⋄ (hn ht hf hm hx hz ha he hl hi)←h ⋄ (initrow finirow initsec finisec)←life
 
         parts←interp hash dynsym dynstr
         rows←0 2 3 4
@@ -675,9 +676,14 @@ LNK←{o←PS∆ARGS ⍵
             out[dx[p]+⍳≢⊃parts[r]]←⊃parts[r]
         ⍬}¨⍳≢rows
 
-        nplt←≢pltimport ⋄ nglob←≢gotimport ⋄ nlocal←≢localgotsym
+        nplt←≢pltimport ⋄ nglob←≢gotimport ⋄ nlocal←≢localgotsym ⋄ ngd←≢gdimport ⋄ ntlsdesc←hasld+ngd
         pltaddr←da[1]+16×⍳nplt ⋄ gotaddr←da[7]+8×⍳nplt+nglob+nlocal
         pltgotaddr←gotaddr[ip[pltimport]] ⋄ globaddr←gotaddr[nplt+ig[gotimport]] ⋄ localaddr←gotaddr[nplt+nglob+⍳nlocal]
+        tlsdescaddr←da[7]+8×(nplt+nglob+nlocal)+2×⍳ntlsdesc ⋄ tlsldaddr←hasld×⊃tlsdescaddr,0 ⋄ tlsgdaddr←hasld↓tlsdescaddr
+
+        ⍝ Construct TLS dynamic relocations
+        tlsdynoffset←tlsdescaddr,tlsgdaddr+8 ⋄ tlsdynsym←(hasld/0),1+gdimport
+        tlsdyninfo←16+(2*32)×tlsdynsym ⋄ tlsdyninfo,←17+(2*32)×1+gdimport ⋄ tlsdynadd←tlsdynoffset≢⍛⍴0
 
         ⍝ PLT entries are jmp *disp32(%rip) followed by padding.
         at←16×⍳nplt
@@ -692,13 +698,13 @@ LNK←{o←PS∆ARGS ⍵
 
         symboloff←la[rh[symbolic]]+rx[symbolic] ⋄ relativeoff←la[rh[relative]]+rx[relative]
 
-        off←globaddr,(o.pie/localaddr),symboloff,relativeoff
-        info←globinfo,(8⍴⍨o.pie×nlocal),symbolinfo,relative≢⍛⍴8
-        add←(nglob⍴0),(o.pie/ls[localgotsym]),ra[symbolic],ls[rs[relative]]+ra[relative]
+        off←tlsdynoffset,globaddr,(o.pie/localaddr),symboloff,relativeoff
+        info←tlsdyninfo,globinfo,(8⍴⍨o.pie×nlocal),symbolinfo,relative≢⍛⍴8
+        add←tlsdynadd,(nglob⍴0),(o.pie/ls[localgotsym]),ra[symbolic],ls[rs[relative]]+ra[relative]
         dynrela←RELA(⊂off),(⊂info),⊂add
 
         localvalue←ls[localgotsym]×~o.pie
-        got←(0⍴⍨8×nplt+nglob),8 SB localvalue
+        got←(0⍴⍨8×nplt+nglob),(8 SB localvalue),0⍴⍨16×ntlsdesc
 
         out[dx[1]+⍳≢plt]←plt ⋄ out[dx[5]+⍳≢relaplt]←relaplt
         out[dx[6]+⍳≢dynrela]←dynrela ⋄ out[dx[7]+⍳≢got]←got
@@ -721,26 +727,32 @@ LNK←{o←PS∆ARGS ⍵
     ⍝ Apply relocations
     _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r ⋄ (lx la ls lfz lmz le ld)←layout
         (dx da)←ld ⋄ da←9↑da,9⍴0
-        (pltimport gotimport localgotsym symbolic relative ip ig lg)←dplan
+        (pltimport gotimport localgotsym gdimport hasld symbolic relative ip ig lg igt)←dplan
         (hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab)←dynparts
 
         rr←⍸0≤lx[rh] ⋄ type←rt[rr] ⋄ gottypes←9 41 42
-        ∨/~type∊1 2 4,gottypes:'Unsupported relocation type'⎕SIGNAL 200
+        ∨/~type∊1 2 4 9 19 20 21 41 42:'Unsupported relocation type'⎕SIGNAL 200
 
-        pc32←type∊2 4,gottypes
-        width←8 4[pc32] ⋄ target←rh[rr] ⋄ offset←rx[rr] ⋄ targetz←hz[target]
+        pc32←type∊2 4 9 19 20 41 42
+        width←8 4[type≠1] ⋄ target←rh[rr] ⋄ offset←rx[rr] ⋄ targetz←hz[target]
         ∨/(offset>targetz)∨width>targetz-offset:'Relocation target outside section'⎕SIGNAL 200
+
+        tlssec←⍸(0≤lx)∧1024≤2048|hf ⋄ tlsbase←{0=≢⍵:0 ⋄ ⌊/la[⍵]}tlssec
+        (nplt nglob nlocal ngd)←≢¨pltimport gotimport localgotsym gdimport ⋄ ntlsdesc←hasld+ngd
+        tlsdescaddr←da[7]+8×(nplt+nglob+nlocal)+2×⍳ntlsdesc ⋄ tlsldaddr←hasld×⊃tlsdescaddr,0 ⋄ tlsgdaddr←hasld↓tlsdescaddr
+
 
         where←lx[target]+offset ⋄ S←ls[rs[rr]] ⋄ A←ra[rr] ⋄ P←la[target]+offset
         import←ri[rr] ⋄ imported←import≥0
         pltref←⍸imported∧type=4 ⋄ gotref←⍸imported∧type∊gottypes ⋄ localgotref←⍸(~imported)∧type∊gottypes
         nplt←≢pltimport ⋄ nglob←≢gotimport
+        tlsldref←⍸type=20 ⋄ tlsgdref←⍸type=19 ⋄ dtpoffref←⍸type=21
         S[pltref]←da[1]+16×ip[import[pltref]]
         S[gotref]←da[7]+8×nplt+ig[import[gotref]]
         S[localgotref]←da[7]+8×nplt+nglob+lg[rs[rr[localgotref]]]
+        S[tlsldref]←tlsldaddr ⋄ S[tlsgdref]←tlsgdaddr[igt[import[tlsgdref]]] ⋄ S[dtpoffref]←ls[rs[rr[dtpoffref]]]-tlsbase
         value←S+A-P×pc32
-
-        ∨/pc32∧((value<¯1×2*31)∨value>¯1+2*31):'Relocation value overflow'⎕SIGNAL 200
+        ∨/(width=4)∧(value<-2*31)∨value≥2*31:'Relocation value overflow'⎕SIGNAL 200
 
         batchbytes←2*20 ⍝ avoid large allocation for temporary arrays.
         _←{w←⍵
