@@ -58,6 +58,7 @@ LAYOUT←{group size align←⍵ ⋄ ⍺←0 ⍝ optional origin
     p z(⊃⌽x+s)}
 
 OUT∆INIT←{size←⍺ ⋄ file←⍵
+    _←1⎕NDELETE file
     t←file ⎕NCREATE 0
     _←size ⎕NRESIZE t
     _←⎕NUNTIE t
