@@ -1,7 +1,7 @@
 ⎕IO←0
 
 U32←{⍵+(2*32)×⍵<0} ⋄ U64←{(U32 ⍺[;⍵])+(2*32)×U32 ⍺[;⍵+1]}
-S64←{(U32 ⍺[;⍵])+(2*32)×⍺[;⍵+1]} ⋄ SB←{b←,⍉⊖(⍺⍴256)⊤⍵ ⋄ b-256×b≥128}
+S64←{(U32 ⍺[;⍵])+(2*32)×⍺[;⍵+1]} ⋄ SB←{0=≢⍵:⍬ ⋄ b←,⍉⊖(⍺⍴256)⊤⍵ ⋄ b-256×b≥128}
 ZSTR←{80⎕DR(⍵⍳0)↑⍵} ⋄ ZSTRU←{⎕UCS(⍵⍳0)↑⍵}
 ALIGN←{⍵+⍺|-⍵}
 
@@ -632,11 +632,42 @@ LNK←{o←PS∆ARGS ⍵
     _←{(hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab)←dynparts
         ~hasdynamic:⍬
         (lx la ls lfz lmz le ld)←layout ⋄ (dx da)←ld ⋄ (dkeep nx dynstr dynsym)←dynamic
+        (pltimport gotimport localgotsym symbolic relative ip ig lg)←dplan
+        (rh rx rs rt ra)←r
+
         parts←interp hash dynsym dynstr
         rows←0 2 3 4
         _←rows{p←⍺ ⋄ r←⍵
             out[dx[p]+⍳≢⊃parts[r]]←⊃parts[r]
         ⍬}¨⍳≢rows
+
+        nplt←≢pltimport ⋄ nglob←≢gotimport ⋄ nlocal←≢localgotsym
+        pltaddr←da[1]+16×⍳nplt ⋄ gotaddr←da[7]+8×⍳nplt+nglob+nlocal
+        pltgotaddr←gotaddr[ip[pltimport]] ⋄ globaddr←gotaddr[nplt+ig[gotimport]] ⋄ localaddr←gotaddr[nplt+nglob+⍳nlocal]
+
+        ⍝ PLT entries are jmp *disp32(%rip) followed by padding.
+        at←16×⍳nplt
+        plt← (4SB pltgotaddr-pltaddr+6)@(,at∘.+2+⍳4)⊢37@(at+1)⊢¯1@at⊢¯112⍴⍨16×nplt
+
+        RELA←{(off info add)←⍵ ⋄ at←24×⍳≢off
+            (8SB add)@(,at∘.+16+⍳8)⊢(8SB info)@(,at∘.+8+⍳8)⊢(8SB off)@(,at∘.+⍳8)⊢0⍴⍨24×≢off}
+
+        info←7+(2*32)×1+pltimport
+        relaplt←RELA (⊂pltgotaddr),(⊂info),⊂nplt⍴0
+        globinfo←6+(2*32)×1+gotimport ⋄ symbolinfo←1+(2*32)×1+ri[symbolic]
+
+        symboloff←la[rh[symbolic]]+rx[symbolic] ⋄ relativeoff←la[rh[relative]]+rx[relative]
+
+        off←globaddr,(o.pie/localaddr),symboloff,relativeoff
+        info←globinfo,(8⍴⍨o.pie×nlocal),symbolinfo,relative≢⍛⍴8
+        add←(nglob⍴0),(o.pie/ls[localgotsym]),ra[symbolic],ls[rs[relative]]+ra[relative]
+        dynrela←RELA(⊂off),(⊂info),⊂add
+
+        localvalue←ls[localgotsym]×~o.pie
+        got←(0⍴⍨0×nplt+nglob),8 SB localvalue
+
+        out[dx[1]+⍳≢plt]←plt ⋄ out[dx[5]+⍳≢relaplt]←relaplt
+        out[dx[6]+⍳≢dynrela]←dynrela ⋄ out[dx[7]+⍳≢got]←got
 
         tags←(nx≢⍛⍴1),4 5 6 10 11 3 2 20 23 7 8 9 24 0
         values←nx,da[2 4 3],(≢dynstr),24,da[7],(≢relaplt),7,da[5 6],(≢dynrela),24 0 0
