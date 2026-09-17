@@ -190,3 +190,12 @@ test_pie←{
     library←'libtest_pie.so' Shared 'test_archive_required.o'
     (expected start)←AssetPaths 'test_pie.elf.expected' 'test_pie_start.o'
     expected CheckOutput start library '-pie'}
+
+test_lifecycle←{
+    library←'libtest_lifecycle.so' Shared 'test_archive_required.o'
+    (expected start)←AssetPaths 'test_lifecycle.elf.expected' 'test_lifecycle_start.o'
+    expected CheckOutput start library}
+
+test_tls_layout←{
+    (expected start)←AssetPaths 'test_tls_layout.elf.expected' 'test_tls_layout_start.o'
+    expected CheckOutput start}
