@@ -199,3 +199,13 @@ test_lifecycle←{
 test_tls_layout←{
     (expected start)←AssetPaths 'test_tls_layout.elf.expected' 'test_tls_layout_start.o'
     expected CheckOutput start}
+
+test_tls_gd←{
+    library←'libtest_tls_gd.so' Shared 'test_tls_gd_value.o' ⋄ loader←'/lib64/ld-linux-x86-64.so.2'
+    (expected start)←AssetPaths 'test_tls_gd.elf.expected' 'test_tls_gd_start.o'
+    expected CheckOutput start library loader}
+
+test_tls_ld←{
+    loader←'/lib64/ld-linux-x86-64.so.2'
+    (expected start)←AssetPaths 'test_tls_ld.elf.expected' 'test_tls_ld_start.o'
+    expected CheckOutput start loader}
