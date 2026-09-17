@@ -175,3 +175,8 @@ test_dso_decode←{
     library←'libtest_dso_decode.so' Shared 'test_archive_required.o'
     (expected start)←AssetPaths 'test_dso_decode.elf.expected' 'test_norela_start.o'
     expected CheckOutput start library}
+
+test_dynamic←{
+    library←'libtest_dynamic.so' Shared 'test_archive_required.o'
+    (expected start)←AssetPaths 'test_dynamic.elf.expected' 'test_dynamic_start.o'
+    expected CheckOutput start library}
