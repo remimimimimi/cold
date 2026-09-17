@@ -729,7 +729,7 @@ LNK←{o←PS∆ARGS ⍵
         out[dx[1]+⍳≢plt]←plt ⋄ out[dx[5]+⍳≢relaplt]←relaplt
         out[dx[6]+⍳≢dynrela]←dynrela ⋄ out[dx[7]+⍳≢got]←got
 
-        RANGE←{0=≢⍵:0 0 ⋄ start((⌊/x+hz[⍵])-start←⌈/x←la[⍵])}
+        RANGE←{0=≢⍵:0 0 ⋄ start((⌈/x+hz[⍵])-start←⌊/x←la[⍵])}
         initarray←RANGE initsec ⋄ finiarray←RANGE finisec
         hasinit←initrow≥0 ⋄ hasfini←finirow≥0 ⋄ hasinitarray←0<≢initsec ⋄ hasfiniarray←0<≢finisec
         lifetags←(hasinit/12),(hasfini/13),(hasinitarray/25 27),hasfiniarray/26 28
