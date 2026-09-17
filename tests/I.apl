@@ -23,4 +23,4 @@ test_clang←{
 
     r←⎕SHELL '"',hello,'"'
     0 0≢r[2 3]:('Clang compiled hello world failed: ',⍕r)⎕SIGNAL 11
-    1}
+    ⍬}
