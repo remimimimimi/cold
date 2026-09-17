@@ -516,6 +516,21 @@ LNK←{o←PS∆ARGS ⍵
         dkeep nx dynstr dynsym
     }imports dplan
 
+    ⍝ Generated dynamic sections
+    dynparts←{(imports dplan dynamic)←⍵ ⋄ (in ib idso it iz)←imports ⋄ (dkeep nx dynstr dynsym)←dynamic
+        (pltimport gotimport localgotsym symbolic relative ip ig lg)←dplan
+        (nplt nglob nlocal)←≢¨pltimport gotimport localgotsym
+        nrela←nglob+(o.pie×nlocal)+(≢symbolic)+≢relative
+        hasdynamic←∨/dkeep
+        interp←83⎕DR o.interp,⎕UCS 0
+        hash←4SB 1 ndynsym(×≢in),(2+⍳0⌈(≢in)-1)@(1+⍳0⌈(≢in)-1)⊢0⍴⍨ndynsym←1+≢in
+
+        plt←0⍴⍨16×nplt ⋄ relaplt←0⍴⍨24×nplt ⋄ dynrela←0⍴⍨24×nrela
+        got←0⍴⍨8×nplt+nglob+nlocal ⋄ dyntab←0⍴⍨16×14+≢nx
+
+        hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab
+    }imports dplan dynamic
+
     ⍝ Layout
     base←4194304
     (layout copies sections segments)←{(h s common startsym)←⍵
