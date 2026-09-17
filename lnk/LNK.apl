@@ -668,7 +668,7 @@ LNK←{o←PS∆ARGS ⍵
             (3 2)(4 6)x(base+x)(base+x)z z(1 8)}⍬
         segments←(pt pf px pv pv pfz pmz pa),¨special
         tlsseg←{~hastls:8⍴⊂⍬
-            m←group∊5 6 ⋄ fz←(⌈/x,(group=5)/rel+size)-x←⌊/m/rel
+            m←group∊7 8 ⋄ fz←(⌈/x,(group=7)/rel+size)-x←⌊/m/rel
             mz←(⌈/m/rel+size)-x ⋄ a←⌈/m/align
             (,7)(,4)(,x)(,base+x)(,base+x)(,fz)(,mz)(,a)
         }⍬
