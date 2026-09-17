@@ -614,7 +614,7 @@ LNK←{o←PS∆ARGS ⍵
         genndx←1+(≢groups)+⍳≢gennames
 
         gentype←hasdynamic/1 1 5 11 3 4 4 1 6 ⋄ genflags←hasdynamic/2 6 2 2 2 2 2 3 3
-        genentsize←hasdynamic/0 16 4 24 0 24 24 8 16 ⋄ gotndx←8+≢groups ⋄ geninfo←hasdynamic/0 0 0 0 0 gotndx 0 0 0
+        genentsize←hasdynamic/0 16 4 24 0 24 24 8 16 ⋄ gotndx←8+≢groups ⋄ geninfo←hasdynamic/0 0 0 1 0 gotndx 0 0 0
         dsndx←4+≢groups ⋄ dstrndx←5+≢groups
         genlink←hasdynamic/0 0 dsndx dstrndx 0 dsndx dsndx 0 dstrndx
 
