@@ -532,7 +532,7 @@ LNK←{o←PS∆ARGS ⍵
     }imports dplan dynamic
 
     ⍝ Layout
-    base←4194304
+    base←4194304×~o.pie
     (layout copies sections segments)←{(h s common startsym)←⍵
         (hn ht hf hm hx hz ha he hl hi)←h ⋄ (sn sb st so ss sv sz)←s ⋄ (cs cz ca)←common
         (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
@@ -668,7 +668,7 @@ LNK←{o←PS∆ARGS ⍵
     header←{(lx la ls lfz lmz le ld)←layout ⋄ (pt pf px pv pp pfz pmz pa)←segments
         ident←ELF∆IDENT∆EXP,7⍴0
         ehdr←,ident
-        ehdr,←2 SB 2 62
+        ehdr,←2 SB(2+o.pie)62
         ehdr,←4 SB 1
         ehdr,←8 SB le 64 shtoff
         ehdr,←4 SB 0
