@@ -14,7 +14,7 @@ PS∆ARGS←{args←⍵
     o.(root hashstyle buildid dependencyfile)←⊂''
     o.interp←'/lib64/ld-linux-x86-64.so.2'
 
-    m←args∊'-L' '-l' '-dynamic-linker' '-o'
+    m←args∊'-L' '-l' '-dynamic-linker' '-o' '-m' '-z' '-rpath' '-rpath-link'
     (m/args),←(m,0)/1⌽args,⊂'' ⋄ args←(~0,¯1↓m)/args
 
     o.(path lib)←'-L' '-l'{m←⍺∘≡¨(≢⍺)↑¨⍵ ⋄ (≢⍺)↓¨m/⍵}¨⊂args
@@ -93,7 +93,24 @@ LNK←{o←PS∆ARGS ⍵
         script←~binary←elf∨archive←thick∨thin
 
         parsed←{SCRIPT ⎕UCS 256|⍵}¨(0⍴⊂⍬),script/mapped
-        (members asneeded)←,⌿↑parsed,⊂⍬ ⍬ ⋄ count←{≢⊃⍵}¨parsed
+        members←(0⍴⊂'.'),⊃,/(0⊃¨parsed),⊂⍬ ⋄ asneeded←⊃,/(1⊃¨parsed),⊂⍬ ⋄ count←{≢⊃⍵}¨parsed
+
+        dirs←count/{⊃1⎕NPARTS ⍵}¨script/paths
+        candidate←dirs,¨members
+        check←(0<≢¨members)∧('-'≠⊃¨members)∧'/'≠⊃¨members
+        local←(⎕NEXISTS¨check/candidate)@{check}⊢members≢⍛⍴0
+        members←(local/candidate)@{local}⊢members
+
+        search←('-'≠⊃¨members)∧~⎕NEXISTS¨members
+        members←{
+            found←{
+                candidates←o.path,¨⊂'/',⍵
+                exists←⎕NEXISTS¨candidates
+                ~∨/exists:('Cannot find linker-script input ',⍵)⎕SIGNAL 200
+                (exists⍳1)⊃candidates
+            }¨search/⍵
+            found@{search}⊢⍵
+        }⍣(∨/search)⊢members
 
         kept←binary∘/¨paths mapped(etype×elf)thin specopt
         ((done maps kind thins doneopt),¨kept),members((count/script/specopt)∨asneeded)
