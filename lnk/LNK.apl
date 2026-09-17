@@ -517,9 +517,20 @@ LNK←{o←PS∆ARGS ⍵
         dkeep nx dynstr dynsym
     }imports dplan
 
+    ⍝ Lifecycle inputs
+    life←{(s h)←⍵ ⋄ (sn sb st so ss sv sz)←s ⋄ (hn ht hf hm hx hz ha he hl hi)←h
+        live←(ss≥0)∧seckeep[0⌈ss]
+
+        ROW←{r←⍸live∧sn∊⊂83⎕DR⍵ ⋄ ⊃r,¯1}
+        initrow←ROW'_init' ⋄ finirow←ROW'_fini'
+        initsec←⍸seckeep∧ht=14 ⋄ finisec←⍸seckeep∧ht=15
+        initrow finirow initsec finisec
+    }s h
+
     ⍝ Generated dynamic sections
     dynparts←{(imports dplan dynamic)←⍵ ⋄ (in ib idso it iz)←imports ⋄ (dkeep nx dynstr dynsym)←dynamic
-        (pltimport gotimport localgotsym symbolic relative ip ig lg)←dplan
+        (pltimport gotimport localgotsym symbolic relative ip ig lg)←dplan ⋄ (initrow finirow initsec finisec)←life
+        nlife←(initrow≥0)+(finirow≥0)+2×(0<≢initsec)+0<≢finisec
         (nplt nglob nlocal)←≢¨pltimport gotimport localgotsym
         nrela←nglob+(o.pie×nlocal)+(≢symbolic)+≢relative
         hasdynamic←∨/dkeep
@@ -527,7 +538,7 @@ LNK←{o←PS∆ARGS ⍵
         hash←4SB 1 ndynsym(×≢in),(2+⍳0⌈(≢in)-1)@(1+⍳0⌈(≢in)-1)⊢0⍴⍨ndynsym←1+≢in
 
         plt←0⍴⍨16×nplt ⋄ relaplt←0⍴⍨24×nplt ⋄ dynrela←0⍴⍨24×nrela
-        got←0⍴⍨8×nplt+nglob+nlocal ⋄ dyntab←0⍴⍨16×12+(3××nrela)+≢nx
+        got←0⍴⍨8×nplt+nglob+nlocal ⋄ dyntab←0⍴⍨16×12+nlife+(3××nrela)+≢nx
 
         hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab
     }imports dplan dynamic
@@ -548,17 +559,17 @@ LNK←{o←PS∆ARGS ⍵
         ∨/write∧exec:'Writable executable sections are not supported'⎕SIGNAL 200
         ∨/~seca∊2*⍳63:'Unsupported section alignment'⎕SIGNAL 200
 
-        nobits←type=8 ⋄ group←((~exec)+write)+3×nobits ⋄ nsec←≢secs
-        group,←(cs≢⍛⍴5),gengroup ⋄ size←secz,cz,gensize ⋄ align←seca,ca,genalign
-        ∨/group∊3 4:'Unsupported NOBITS output-section flags'⎕SIGNAL 200
+        nobits←type=8 ⋄ tls←1024≤2048|flags
+        group←7@{nobits∧~tls}⊢6@{tls∧nobits}⊢5@{tls∧~nobits}⊢4@{type=15}⊢3@{type=14}⊢write+~exec
+        group,←(cs≢⍛⍴7),gengroup ⋄ size←secz,cz,gensize ⋄ align←seca,ca,genalign
 
         ⍝ Segments
-        ne←0<size ⋄ seg←(group=1)+2×group∊2 5 ⍝RX=0,R=1,RW=2
-        class←0 1 2∩ne/seg ⋄ segstart←{⊃⍸seg=⍵}¨class
-        hdrsz←64+56×1+(≢class)+3×hasdynamic ⋄ lalign←4096∘⌈@segstart⊢align
+        ne←0<size ⋄ seg←(group=1)+2×group≥2 ⍝RX=0,R=1,RW=2
+        class←0 1 2∩ne/seg ⋄ hastls←∨/group∊5 6 ⋄ segstart←{⊃⍸seg=⍵}¨class
+        hdrsz←64+56×1+(≢class)+3×hasdynamic+hastls ⋄ lalign←4096∘⌈@segstart⊢align
 
         ⍝ Actual layouting
-        (order rel memsz)←hdrsz LAYOUT group size lalign
+        (order rel memsz)←hdrsz LAYOUT group size lalign ⋄ nsec←≢secs
         secrel←nsec↑rel ⋄ rest←nsec↓rel
         comrel←cs≢⍛↑rest ⋄ genrel←cs≢⍛↓rest
 
@@ -579,7 +590,7 @@ LNK←{o←PS∆ARGS ⍵
         ⍝ Segments continuation
         span←{
             m←seg=⍵ ⋄ x←⌊/m/rel
-            fz←(⌈/x,(m∧group≠5)/(rel+size))-x
+            fz←(⌈/x,(m∧~group∊6 7)/(rel+size))-x
             mz←(⌈/m/(rel+size))-x
             x fz mz
         }¨class
@@ -593,9 +604,9 @@ LNK←{o←PS∆ARGS ⍵
         first←≠g ⋄ last←1⌽first ⋄ groups←first/g
 
         secoff←first/x ⋄ secsz←secoff-⍨last/x+zsize ⋄ secalign←g{⌈/⍵}⌸zalign ⋄ secaddr←base+secoff
-        sectype←(1 1 1 0 0 8)[groups] ⋄ secflags←(6 2 3 0 0 3)[groups]
-        seclink←groups≢⍛⍴0 ⋄ secinfo←groups≢⍛⍴0 ⋄ secentsize←groups≢⍛⍴0
-        secnames←('.text' '.rodata' '.data' '' '' '.bss')[groups]
+        sectype←(1 1 1 14 15 1 8 8)[groups] ⋄ secflags←(6 2 3 3 3 1027 1027 3)[groups]
+        seclink←groups≢⍛⍴0 ⋄ secinfo←groups≢⍛⍴0 ⋄ secentsize←(0 0 0 8 8 0 0 0)[groups]
+        secnames←('.text' '.rodata' '.data' '.init_array' '.fini_array' '.tdata' '.tbss' '.bss')[groups]
 
         ⍝Generated dynamic sections
         gennames←hasdynamic/'.interp' '.plt' '.hash' '.dynsym' '.dynstr' '.rela.plt' '.rela.dyn' '.got' '.dynamic'
@@ -609,9 +620,10 @@ LNK←{o←PS∆ARGS ⍵
         secoff,←genrel ⋄ secaddr,←base+genrel ⋄ secsz,←gensize ⋄ secalign,←genalign ⋄ sectype,←gentype
         secflags,←genflags ⋄ seclink,←genlink ⋄ secinfo,←geninfo ⋄ secentsize,←genentsize ⋄ secnames,←gennames
 
-        names←'.text' '.rodata' '.data' '.bss',gennames,⊂'.shstrtab'
-        nameoff←1+¯1↓+\0,1+≢¨names ⋄ shstr←z,∊names,¨z←⎕UCS 0
-        secname←nameoff[(0 1 2 0 0 3)[groups]] ⋄ secname,←nameoff[4+hasdynamic/⍳9] ⋄ shstrname←⊃⌽nameoff
+        extra←3 4 5 6∩groups ⋄ extranames←('.init_array' '.fini_array' '.tdata' '.tbss')[extra-3]
+        nameoff←1+¯1↓+\0,1+≢¨names←'.text' '.rodata' '.data' '.bss',extranames,gennames,⊂'.shstrtab' ⋄ shstr←z,∊names,¨z←⎕UCS 0
+        secname←nameoff[(0 1 2 0 0 0 0 3)[groups]] ⋄ secname[rows]←nameoff[4+extra⍳groups[rows←⍸groups∊3 4 5 6]]
+        secname,←nameoff[4+(≢extra)+hasdynamic/⍳9] ⋄ shstrname←⊃⌽nameoff
 
         shstroff←filesz ⋄ shtoff←8ALIGN shstroff+≢shstr ⋄ shnum←2+≢secnames ⋄ shstrndx←1+≢secnames
 
@@ -623,6 +635,12 @@ LNK←{o←PS∆ARGS ⍵
             x←genrel[0 8] ⋄ z←gensize[0 8]
             (3 2)(4 6)x(base+x)(base+x)z z(1 8)}⍬
         segments←(pt pf px pv pv pfz pmz pa),¨special
+        tlsseg←{~hastls:8⍴⊂⍬
+            m←group∊5 6 ⋄ fz←(⌈/x,(group=5)/rel+size)-x←⌊/m/rel
+            mz←(⌈/m/rel+size)-x ⋄ a←⌈/m/align
+            (,7)(,4)(,x)(,base+x)(,base+x)(,fz)(,mz)(,a)
+        }⍬
+        segments←segments,¨tlsseg
         phdr←{~hasdynamic:8⍴⊂⍬
             z←56×1+≢⊃segments
             (,6)(,4)(,64)(,base+64)(,base+64)(,z)(,z)(,8)}⍬
@@ -648,8 +666,8 @@ LNK←{o←PS∆ARGS ⍵
     _←{(hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab)←dynparts
         ~hasdynamic:⍬
         (lx la ls lfz lmz le ld)←layout ⋄ (dx da)←ld ⋄ (dkeep nx dynstr dynsym)←dynamic
-        (pltimport gotimport localgotsym symbolic relative ip ig lg)←dplan
-        (rh rx rs rt ra)←r
+        (pltimport gotimport localgotsym symbolic relative ip ig lg)←dplan ⋄ (rh rx rs rt ra)←r
+        (hn ht hf hm hx hz ha he hl hi)←h ⋄ (initrow finirow initsec finisec)←life
 
         parts←interp hash dynsym dynstr
         rows←0 2 3 4
@@ -685,9 +703,15 @@ LNK←{o←PS∆ARGS ⍵
         out[dx[1]+⍳≢plt]←plt ⋄ out[dx[5]+⍳≢relaplt]←relaplt
         out[dx[6]+⍳≢dynrela]←dynrela ⋄ out[dx[7]+⍳≢got]←got
 
+        RANGE←{0=≢⍵:0 0 ⋄ start((⌊/x+hz[⍵])-start←⌈/x←la[⍵])}
+        initarray←RANGE initsec ⋄ finiarray←RANGE finisec
+        hasinit←initrow≥0 ⋄ hasfini←finirow≥0 ⋄ hasinitarray←0<≢initsec ⋄ hasfiniarray←0<≢finisec
+        lifetags←(hasinit/12),(hasfini/13),(hasinitarray/25 27),hasfiniarray/26 28
+        lifevalues←(hasinit/ls[0⌈initrow]),(hasfini/ls[0⌈finirow]),(hasinitarray/initarray),hasfiniarray/finiarray
+
         hasrela←0<≢dynrela
-        tags←(nx≢⍛⍴1),4 5 6 10 11 3 2 20 23,(hasrela/7 8 9),30 1879048187 0
-        values←nx,da[2 4 3],(≢dynstr),24,da[7],(≢relaplt),7,da[5],(hasrela/da[6](≢dynrela)24),8 1 0
+        tags←(nx≢⍛⍴1),4 5 6 10 11 3 2 20 23,(hasrela/7 8 9),lifetags,30 1879048187 0
+        values←nx,da[2 4 3],(≢dynstr),24,da[7],(≢relaplt),7,da[5],(hasrela/da[6](≢dynrela)24),lifevalues,8 1 0
 
         at←16×⍳≢tags
         dyntab[,at∘.+⍳8]←8SB tags ⋄ dyntab[,at∘.+8+⍳8]←8SB values
