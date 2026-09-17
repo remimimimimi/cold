@@ -437,6 +437,7 @@ LNK←{o←PS∆ARGS ⍵
         weak←sb=2 ⋄ strong←(sb=1)∨sb=10 ⋄ ext←strong∨weak
         defd←reg∨abs∨com
         names←∪sn ⋄ sid←names⍳sn
+        gotdef←sn∊⊂83⎕DR'_GLOBAL_OFFSET_TABLE_'
         ∨/~≠(strong∧defd∧~com)/sid:'Multiple strong symbol definitions'⎕SIGNAL 200
 
         def←⍸ext∧defd ⋄ def←def[⍋com[def]+2×weak[def]] ⋄ def←(≠sid[def])/def
@@ -445,7 +446,7 @@ LNK←{o←PS∆ARGS ⍵
 
         ⍝ Resolve external symbol rows against objects, then DSOs.
         erow←⍸ext∧~defd ⋄ local←byname[sid[erow]] ⋄ drow←dn⍳sn[erow]
-        dynamic←(local=zero)∧drow<≢dn ⋄ missing←(local=zero)∧~dynamic ⋄ required←weak[erow]⍲0=so[erow]
+        dynamic←(local=zero)∧drow<≢dn ⋄ missing←(local=zero)∧~dynamic ⋄ required←gotdef[erow]⍱weak[erow]∧0=so[erow]
         ∨/missing∧required:'Undefined symbol'⎕SIGNAL 200
 
         ⍝ Deduplicate imports in first-occurence order.
@@ -458,7 +459,7 @@ LNK←{o←PS∆ARGS ⍵
         simport←ii@isym⊢sn≢⍛⍴¯1 ⋄ ri←simport[rs]
 
         ⍝ Redirect locally resolved relocation symbols.
-        rdef←rs ⋄ refs←rdef[rows←⍸ext[rdef]]
+        rdef←rs ⋄ refs←rdef[rows←⍸ext[rdef]∧~gotdef[rdef]]
         resolved←byname[sid[refs]] ⋄ imported←simport[refs]≥0
         rdef←zero@(imported/rows)⊢resolved@rows⊢rdef
         real←rdef≠zero
@@ -573,7 +574,7 @@ LNK←{o←PS∆ARGS ⍵
 
         reg←ss≥0 ⋄ abs←ss=¯2
         symaddr←reg\(shaddr[reg/ss]+reg/sv) ⋄ symaddr[⍸abs]←abs/sv
-        symaddr[cs]←base+comrel ⋄ symaddr,←0
+        symaddr[cs]←base+comrel ⋄ symaddr[⍸sn∊⊂83⎕DR'_GLOBAL_OFFSET_TABLE_']←base+7⊃9↑genrel,9⍴0 ⋄ symaddr,←0
 
         ⍝ Segments continuation
         span←{

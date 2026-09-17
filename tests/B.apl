@@ -180,3 +180,8 @@ test_dynamic←{
     library←'libtest_dynamic.so' Shared 'test_archive_required.o'
     (expected start)←AssetPaths 'test_dynamic.elf.expected' 'test_dynamic_start.o'
     expected CheckOutput start library}
+
+test_dynamic_relocations←{
+    library←'libtest_dynamic_relocations.so' Shared 'test_dynamic_value.o'
+    (expected start)←AssetPaths 'test_dynamic_relocations.elf.expected' 'test_dynamic_relocations_start.o'
+    expected CheckOutput start library}
