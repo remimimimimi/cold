@@ -565,7 +565,8 @@ LNK←{o←PS∆ARGS ⍵
         nlife←(initrow≥0)+(finirow≥0)+2×(0<≢initsec)+0<≢finisec
         (nplt nglob ngd nlocal)←≢¨pltimport gotimport gdimport localgotsym ⋄ ntlsdesc←hasld+ngd
 
-        nrela←nglob+(o.pie×nlocal)+(≢symbolic)+(≢relative)+ntlsdesc+ngd
+        local←localgotsym≠≢⊃s
+        nrela←nglob+(o.pie×+/local)+(≢symbolic)+(≢relative)+ntlsdesc+ngd
         hasdynamic←∨/dkeep
         interp←83⎕DR o.interp,⎕UCS 0
         hash←4SB 1 ndynsym(×≢in),(2+⍳0⌈(≢in)-1)@(1+⍳0⌈(≢in)-1)⊢0⍴⍨ndynsym←1+≢in
@@ -709,6 +710,7 @@ LNK←{o←PS∆ARGS ⍵
         nplt←≢pltimport ⋄ nglob←≢gotimport ⋄ nlocal←≢localgotsym ⋄ ngd←≢gdimport ⋄ ntlsdesc←hasld+ngd
         pltaddr←da[1]+16×⍳nplt ⋄ gotaddr←da[7]+8×⍳nplt+nglob+nlocal
         pltgotaddr←gotaddr[ip[pltimport]] ⋄ globaddr←gotaddr[nplt+ig[gotimport]] ⋄ localaddr←gotaddr[nplt+nglob+⍳nlocal]
+        local←localgotsym≠≢⊃s
         tlsdescaddr←da[7]+8×(nplt+nglob+nlocal)+2×⍳ntlsdesc ⋄ tlsldaddr←hasld×⊃tlsdescaddr,0 ⋄ tlsgdaddr←hasld↓tlsdescaddr
 
         ⍝ Construct TLS dynamic relocations
@@ -728,9 +730,9 @@ LNK←{o←PS∆ARGS ⍵
 
         symboloff←la[rh[symbolic]]+rx[symbolic] ⋄ relativeoff←la[rh[relative]]+rx[relative]
 
-        off←tlsdynoffset,globaddr,(o.pie/localaddr),symboloff,relativeoff
-        info←tlsdyninfo,globinfo,(8⍴⍨o.pie×nlocal),symbolinfo,relative≢⍛⍴8
-        add←tlsdynadd,(nglob⍴0),(o.pie/ls[localgotsym]),ra[symbolic],ls[rs[relative]]+ra[relative]
+        off←tlsdynoffset,globaddr,(o.pie/(local/localaddr)),symboloff,relativeoff
+        info←tlsdyninfo,globinfo,(8⍴⍨o.pie×+/local),symbolinfo,relative≢⍛⍴8
+        add←tlsdynadd,(nglob⍴0),(o.pie/(local/ls[localgotsym])),ra[symbolic],ls[rs[relative]]+ra[relative]
         dynrela←RELA(⊂off),(⊂info),⊂add
 
         localvalue←ls[localgotsym]×~o.pie
