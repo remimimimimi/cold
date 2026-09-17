@@ -587,26 +587,37 @@ LNK←{o←PS∆ARGS ⍵
         pt←(≢px)⍴1 ⋄ pf←4,5 4 6[class] ⋄ pa←(≢px)⍴4096
 
         ⍝ Output sections
-        g←group[order] ⋄ x←rel[order]
-        first←≠g ⋄ last←1⌽first
+        regular←order/⍨order<nsec+≢cs
+        g←group[regular] ⋄ x←rel[regular] ⋄ zsize←size[regular] ⋄ zalign←align[regular]
+        first←≠g ⋄ last←1⌽first ⋄ groups←first/g
 
-        groups←first/g
-        secoff←first/x ⋄ secsz←(last/(x+size[order]))-secoff
-        secalign←g{⌈/⍵}⌸align[order] ⋄ secaddr←base+secoff
-
+        secoff←first/x ⋄ secsz←secoff-⍨last/x+zsize ⋄ secalign←g{⌈/⍵}⌸zalign ⋄ secaddr←base+secoff
         sectype←(1 1 1 0 0 8)[groups] ⋄ secflags←(6 2 3 0 0 3)[groups]
+        seclink←groups≢⍛⍴0 ⋄ secinfo←groups≢⍛⍴0 ⋄ secentsize←groups≢⍛⍴0
+        secnames←('.text' '.rodata' '.data' '' '' '.bss')[groups]
 
-        shstr←z,'.text',z,'.rodata',z,'.data',z,'.bss',z,'.shstrtab',z←⎕UCS 0
-        nameoff←⍸¯1⌽z=shstr ⋄ secname←nameoff[(1 2 3 0 0 4)[groups]] ⋄ shstrname←nameoff[5]
+        ⍝Generated dynamic sections
+        gennames←hasdynamic/'.interp' '.plt' '.hash' '.dynsym' '.dynstr' '.rela.plt' '.rela.dyn' '.got' '.dynamic'
+        genndx←1+(≢groups)+⍳≢gennames
 
-        shstroff←filesz ⋄ shtoff←8 ALIGN shstroff+≢shstr
-        shnum←2+≢groups ⋄ shstrndx←1+≢groups
-        outfilesz←shtoff+64×shnum
+        gentype←hasdynamic/1 1 5 11 3 4 4 1 6 ⋄ genflags←hasdynamic/2 6 2 2 2 2 2 3 3
+        genentsize←hasdynamic/0 16 4 24 0 24 24 8 16 ⋄ gotndx←8+≢groups ⋄ geninfo←hasdynamic/0 0 0 0 0 gotndx 0 0 0
+        dsndx←4+≢groups ⋄ dstrndx←5+≢groups
+        genlink←hasdynamic/0 0 dsndx dstrndx 0 dsndx dsndx 0 dstrndx
 
-        entry←symaddr[startsym]
+        secoff,←genrel ⋄ secaddr,←base+genrel ⋄ secsz,←gensize ⋄ secalign,←genalign ⋄ sectype,←gentype
+        secflags,←genflags ⋄ seclink,←genlink ⋄ secinfo,←geninfo ⋄ secentsize,←genentsize ⋄ secnames,←gennames
+
+        names←'.text' '.rodata' '.data' '.bss',gennames,⊂'.shstrtab'
+        nameoff←1+¯1↓+\0,1+≢¨names ⋄ shstr←z,∊names,¨z←⎕UCS 0
+        secname←nameoff[(0 1 2 0 0 3)[groups]] ⋄ secname,←nameoff[4+hasdynamic/⍳9] ⋄ shstrname←⊃⌽nameoff
+
+        shstroff←filesz ⋄ shtoff←8ALIGN shstroff+≢shstr ⋄ shnum←2+≢secnames ⋄ shstrndx←1+≢secnames
+
+        outfilesz←shtoff+64×shnum ⋄ entry←symaddr[startsym]
         dynlayout←genrel(base+genrel)
         layout←shoff shaddr symaddr filesz memsz entry dynlayout
-        osec←secname sectype secflags secaddr secoff secsz secalign
+        osec←secname sectype secflags secaddr secoff secsz secalign seclink secinfo secentsize
         special←{~hasdynamic:8⍴⊂⍬
             x←genrel[0 8] ⋄ z←gensize[0 8]
             (3 2)(4 6)x(base+x)(base+x)z z(1 8)}⍬
@@ -713,7 +724,7 @@ LNK←{o←PS∆ARGS ⍵
     ⍬}⍬
 
     (shnum shstr shstrname shstroff shtoff shstrndx outfilesz osec)←sections
-    secname sectype secflags secaddr secoff secsz secalign←osec
+    secname sectype secflags secaddr secoff secsz secalign seclink secinfo secentsize←osec
 
     ⍝ Construct headers
     header←{(lx la ls lfz lmz le ld)←layout ⋄ (pt pf px pv pp pfz pmz pa)←segments
@@ -734,16 +745,16 @@ LNK←{o←PS∆ARGS ⍵
 
     ⍝ Construct sections at the end
     sht←{
-        sh_name      ←(4 SB 0)⍪(4SB⍤0⊢secname) ⍪(4 SB shstrname)
-        sh_type      ←(4 SB 0)⍪(4SB⍤0⊢sectype) ⍪(4 SB 3)
-        sh_flags     ←(8 SB 0)⍪(8SB⍤0⊢secflags)⍪(8 SB 0)
-        sh_addr      ←(8 SB 0)⍪(8SB⍤0⊢secaddr) ⍪(8 SB 0)
-        sh_offset    ←(8 SB 0)⍪(8SB⍤0⊢secoff)  ⍪(8 SB shstroff)
-        sh_size      ←(8 SB 0)⍪(8SB⍤0⊢secsz)   ⍪(8 SB ≢shstr)
-        sh_link      ←(4 SB 0)⍪({4⍴0}⍤0⊢secsz) ⍪(4 SB 0)
-        sh_info      ←(4 SB 0)⍪({4⍴0}⍤0⊢secsz) ⍪(4 SB 0)
-        sh_addralign ←(8 SB 0)⍪(8SB⍤0⊢secalign)⍪(8 SB 1)
-        sh_entsize   ←(8 SB 0)⍪({8⍴0}⍤0⊢secsz) ⍪(8 SB 0)
+        sh_name      ←(4 SB 0)⍪(4SB⍤0⊢secname)   ⍪(4 SB shstrname)
+        sh_type      ←(4 SB 0)⍪(4SB⍤0⊢sectype)   ⍪(4 SB 3)
+        sh_flags     ←(8 SB 0)⍪(8SB⍤0⊢secflags)  ⍪(8 SB 0)
+        sh_addr      ←(8 SB 0)⍪(8SB⍤0⊢secaddr)   ⍪(8 SB 0)
+        sh_offset    ←(8 SB 0)⍪(8SB⍤0⊢secoff)    ⍪(8 SB shstroff)
+        sh_size      ←(8 SB 0)⍪(8SB⍤0⊢secsz)     ⍪(8 SB ≢shstr)
+        sh_link      ←(4 SB 0)⍪(4SB⍤0⊢seclink)   ⍪(4 SB 0)
+        sh_info      ←(4 SB 0)⍪(4SB⍤0⊢secinfo)   ⍪(4 SB 0)
+        sh_addralign ←(8 SB 0)⍪(8SB⍤0⊢secalign)  ⍪(8 SB 1)
+        sh_entsize   ←(8 SB 0)⍪(8SB⍤0⊢secentsize)⍪(8 SB 0)
         ∊,/sh_name sh_type sh_flags sh_addr sh_offset sh_size sh_link sh_info sh_addralign sh_entsize
     }⍬
     out[shtoff+⍳≢sht]←sht
