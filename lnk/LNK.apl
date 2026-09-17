@@ -501,6 +501,20 @@ LNK←{o←PS∆ARGS ⍵
         pltimport gotimport localgotsym symbolic relative ip ig lg
     }h r ri imports
 
+    ⍝ Dynamic symbols and strings
+    dynamic←{(imports dplan)←⍵ ⋄ (in ib idso it iz)←imports ⋄ (sm sx sz)←shared
+        (pltimport gotimport localgotsym symbolic relative ip ig lg)←dplan
+
+        used←(⍳≢sm)∊idso ⋄ dkeep←used∨~optional[sm] ⋄ neededname←dkeep/soname
+
+        strings←in,neededname ⋄ x←1+¯1↓+\0,len←1+≢¨strings
+        ix←in≢⍛↑x ⋄ nx←in≢⍛↓x ⋄ dynstr←0,∊{⍵,0}¨strings
+        n←≢in ⋄ at←24+24×⍳n
+        dynsym←(8SB iz)@(,at∘.+16+⍳8)⊢(16×ib+it)@(at+4)⊢(4SB ix)@(,at∘.+⍳4)⊢(24×1+n)⍴0
+
+        dkeep nx dynstr dynsym
+    }imports dplan
+
     ⍝ Layout
     base←4194304
     (layout copies sections segments)←{(h s common startsym)←⍵
