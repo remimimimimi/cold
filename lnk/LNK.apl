@@ -223,6 +223,8 @@ LNK←{o←PS∆ARGS ⍵
 
     ⍝ Decode GNU archive symbol indexes
     archiveindex←{(am ax az at)←archives ⋄ (fb view fh0 fhn)←files
+        keep←az≠8
+        (am ax az at)←keep∘/¨am ax az at
         0=≢am:⍬ ⍬ ⍬ ⍬ ⍬ ⍬
         ∨/az<68:'Archive is too small for its symbol index'⎕SIGNAL 200
 
@@ -509,13 +511,13 @@ LNK←{o←PS∆ARGS ⍵
 
         pltimport←∪ri/⍨use∧rt=4 ⋄ gotimport←∪ri/⍨use∧rt∊gottypes
         zero←≢⊃s
-        localgotsym←∪rs/⍨live∧(~imported)∧(rs≠zero)∧rt∊gottypes
+        localgotsym←∪rs/⍨live∧(~imported)∧rt∊gottypes
         gdimport←∪ri/⍨use∧rt=19 ⋄ hasld←live∨.∧rt=20
 
         symbolic←⍸use∧rt=1 ⋄ relative←⍸o.pie∧live∧(~imported)∧(rs≠zero)∧rt=1
 
         ip←(⍳≢pltimport)@pltimport⊢in≢⍛⍴¯1 ⋄ ig←(⍳≢gotimport)@gotimport⊢in≢⍛⍴¯1
-        lg←(⍳≢localgotsym)@localgotsym⊢(≢⊃s)⍴¯1 ⋄ igt←(⍳≢gdimport)@gdimport⊢in≢⍛⍴¯1
+        lg←(⍳≢localgotsym)@localgotsym⊢¯1⍴⍨1+≢⊃s ⋄ igt←(⍳≢gdimport)@gdimport⊢in≢⍛⍴¯1
 
         pltimport gotimport localgotsym gdimport hasld symbolic relative ip ig lg igt
     }h r ri imports
