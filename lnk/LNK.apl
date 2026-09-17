@@ -677,15 +677,28 @@ LNK←{o←PS∆ARGS ⍵
         out[dx[8]+⍳≢dyntab]←dyntab
     ⍬}⍬
 
-    ⍝ Apply static relocations
+    ⍝ Apply relocations
     _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r ⋄ (lx la ls lfz lmz le ld)←layout
-        rr←⍸0≤lx[rh] ⋄ type←rt[rr]
-        ∨/~type∊1 2 4:'Unsupported relocation type'⎕SIGNAL 200
-        pc32←type∊2 4
+        (dx da)←ld ⋄ da←9↑da,9⍴0
+        (pltimport gotimport localgotsym symbolic relative ip ig lg)←dplan
+        (hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab)←dynparts
+
+        rr←⍸0≤lx[rh] ⋄ type←rt[rr] ⋄ gottypes←9 41 42
+        ∨/~type∊1 2 4,gottypes:'Unsupported relocation type'⎕SIGNAL 200
+
+        pc32←type∊2 4,gottypes
         width←8 4[pc32] ⋄ target←rh[rr] ⋄ offset←rx[rr] ⋄ targetz←hz[target]
         ∨/(offset>targetz)∨width>targetz-offset:'Relocation target outside section'⎕SIGNAL 200
+
         where←lx[target]+offset ⋄ S←ls[rs[rr]] ⋄ A←ra[rr] ⋄ P←la[target]+offset
+        import←ri[rr] ⋄ imported←import≥0
+        pltref←⍸imported∧type=4 ⋄ gotref←⍸imported∧type∊gottypes ⋄ localgotref←⍸(~imported)∧type∊gottypes
+        nplt←≢pltimport ⋄ nglob←≢gotimport
+        S[pltref]←da[1]+16×ip[import[pltref]]
+        S[gotref]←da[7]+8×nplt+ig[import[gotref]]
+        S[localgotref]←da[7]+8×nplt+nglob+lg[rs[rr[localgotref]]]
         value←S+A-P×pc32
+
         ∨/pc32∧((value<¯1×2*31)∨value>¯1+2*31):'Relocation value overflow'⎕SIGNAL 200
 
         batchbytes←2*20 ⍝ avoid large allocation for temporary arrays.
