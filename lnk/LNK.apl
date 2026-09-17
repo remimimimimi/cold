@@ -12,7 +12,7 @@ PS∆ARGS←{args←⍵
     o←⎕NS⍬
     o.out←'a.out' ⋄ o.(input path lib)←⊂⍬ ⋄ o.(static pie)←0
     o.(root hashstyle buildid dependencyfile)←⊂''
-    o.interp←'/lib64/ld-linux-x86-64.so.2',⎕UCS 0
+    o.interp←'/lib64/ld-linux-x86-64.so.2'
 
     m←args∊'-L' '-l' '-dynamic-linker' '-o'
     (m/args),←(m,0)/1⌽args,⊂'' ⋄ args←(~0,¯1↓m)/args
