@@ -555,7 +555,7 @@ LNK←{o←PS∆ARGS ⍵
         ⍝ Segments
         ne←0<size ⋄ seg←(group=1)+2×group∊2 5 ⍝RX=0,R=1,RW=2
         class←0 1 2∩ne/seg ⋄ segstart←{⊃⍸seg=⍵}¨class
-        hdrsz←64+56×1+(≢class)+2×hasdynamic ⋄ lalign←4096∘⌈@segstart⊢align
+        hdrsz←64+56×1+(≢class)+3×hasdynamic ⋄ lalign←4096∘⌈@segstart⊢align
 
         ⍝ Actual layouting
         (order rel memsz)←hdrsz LAYOUT group size lalign
@@ -623,6 +623,10 @@ LNK←{o←PS∆ARGS ⍵
             x←genrel[0 8] ⋄ z←gensize[0 8]
             (3 2)(4 6)x(base+x)(base+x)z z(1 8)}⍬
         segments←(pt pf px pv pv pfz pmz pa),¨special
+        phdr←{~hasdynamic:8⍴⊂⍬
+            z←56×1+≢⊃segments
+            (,6)(,4)(,64)(,base+64)(,base+64)(,z)(,z)(,8)}⍬
+        segments←phdr,¨segments
         sections←shnum shstr shstrname shstroff shtoff shstrndx outfilesz osec
         layout copies sections segments
     }h s common startsym
