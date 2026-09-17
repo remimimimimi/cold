@@ -451,7 +451,7 @@ LNK←{o←PS∆ARGS ⍵
         isym←dynamic/erow ⋄ idrow←dynamic/drow
         in←∪sn[isym] ⋄ ii←in⍳sn[isym]
         idrow←idrow[ii⍳⍳≢in]
-        imports←in db[idrow] dobj[idrow] dt[idrow] dz[idrow]
+        imports←(in⋄db[idrow]⋄dobj[idrow]⋄dt[idrow]⋄dz[idrow])
 
         ⍝ Map symbol rows and then relocations to imports.
         simport←ii@isym⊢sn≢⍛⍴¯1 ⋄ ri←simport[rs]
@@ -480,6 +480,26 @@ LNK←{o←PS∆ARGS ⍵
         r←rh rx rdef rt ra ⋄ common←cdef cz ca
         r ri imports common startsym
     }s ds r
+
+    ⍝ Dynamic relocation plan
+    dplan←{(h r ri imports)←⍵ ⋄ (hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r ⋄ (in ib idso it iz)←imports
+        backed←(ht≠8)∧2|⌊hf÷2 ⋄ live←seckeep[rh]∧backed[rh] ⋄ imported←ri≥0 ⋄ gottypes←9 41 42
+
+        use←live∧imported
+        ∨/use∧~rt∊1 4,gottypes:'Unsupported dynamic relocation type'⎕SIGNAL 200
+
+        pltimport←∪ri/⍨use∧rt=4 ⋄ gotimport←∪ri/⍨use∧rt∊gottypes
+        zero←≢⊃s
+        localgotsym←∪rs/⍨live∧(~imported)∧(rs≠zero)∧rt∊gottypes
+
+        symbolic←⍸use∧rt=1 ⋄ relative←⍸o.pie∧live∧~imported∧rs≠zero∧rt=1
+
+        ip←(⍳≢pltimport)@pltimport⊢in≢⍛⍴¯1
+        ig←(⍳≢gotimport)@gotimport⊢in≢⍛⍴¯1
+        lg←(⍳≢localgotsym)@localgotsym⊢(≢⊃s)⍴¯1
+
+        pltimport gotimport localgotsym symbolic relative ip ig lg
+    }h r ri imports
 
     ⍝ Layout
     base←4194304
