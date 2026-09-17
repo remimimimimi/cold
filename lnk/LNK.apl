@@ -136,7 +136,8 @@ LNK←{o←PS∆ARGS ⍵
         expected∨.≠etype:'One of the input files is not an object file'⎕SIGNAL 200
         62∨.≠emachine:'One of the input files is not for AMD64'⎕SIGNAL 200
 
-        eshoff←words U64 10 ⋄ eshentsize←⌊(U32 words[;14])÷65536 ⋄ eshnum←65536|U32 words[;15]
+        eshoff←words U64 10 ⋄ eshentsize←⌊(U32 words[;14])÷65536
+        eshnum←65536|U32 words[;15] ⋄ eshstrndx←⌊(U32 words[;15])÷65536
         64∨.≠eshentsize:'Unexpected section-header entry size'⎕SIGNAL 200
         ∨/(eshoff>vz)∨(64×eshnum)>vz-eshoff:'Section headers outside input view'⎕SIGNAL 200
 
@@ -144,6 +145,16 @@ LNK←{o←PS∆ARGS ⍵
         (hn ht hl hi)←{U32 words[;⍵]}¨0 1 10 11
         (hf hx hz ha he)←words∘U64¨2 6 8 12 14
         fh0←¯1↓+\0,eshnum ⋄ hm←eshnum/⍳≢eshnum
+        ∨/eshstrndx≥eshnum:'Invalid section-name string table index'⎕SIGNAL 200
+        shstr←fh0+eshstrndx
+        ∨/hn≥hz[shstr[hm]]:'Section name outside string table'⎕SIGNAL 200
+
+        rows←⍸(ht=1)∧(2|⌊hf÷2)∧2|⌊hf÷4
+        name←↑{i←⍵ ⋄ obj←hm[i] ⋄ n←6⌊hz[shstr[obj]]-hn[i]
+            6↑(⊃fb[vm[obj]])[vx[obj]+hx[shstr[obj]]+hn[i]+⍳n]
+        }¨rows
+        ht←257@(rows/⍨name∧.=(83⎕DR'.fini'),0)⊢256@(rows/⍨name∧.=(83⎕DR'.init'),0)⊢ht
+
         files←fb views fh0 eshnum
         h←hn ht hf hm hx hz ha he hl hi
         files h}
@@ -572,7 +583,7 @@ LNK←{o←PS∆ARGS ⍵
         (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
         (hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab)←dynparts
         gen←hasdynamic/interp plt hash dynsym dynstr relaplt dynrela got dyntab ⋄ gensize←≢¨gen
-        gengroup←hasdynamic/1 0 1 1 1 1 1 2 2 ⋄ genalign←hasdynamic/1 16 8 8 1 8 8 8 8
+        gengroup←hasdynamic/3 1 3 3 3 3 3 4 4 ⋄ genalign←hasdynamic/1 16 8 8 1 8 8 8 8
 
         alloc←seckeep∧2|⌊hf÷2 ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
         secz←hz[secs] ⋄ seca←1⌈ha[secs]
@@ -582,12 +593,12 @@ LNK←{o←PS∆ARGS ⍵
         ∨/~seca∊2*⍳63:'Unsupported section alignment'⎕SIGNAL 200
 
         nobits←type=8 ⋄ tls←1024≤2048|flags
-        group←7@{nobits∧~tls}⊢6@{tls∧nobits}⊢5@{tls∧~nobits}⊢4@{type=15}⊢3@{type=14}⊢write+~exec
-        group,←(cs≢⍛⍴7),gengroup ⋄ size←secz,cz,gensize ⋄ align←seca,ca,genalign
+        group←9@{nobits∧~tls}⊢8@{tls∧nobits}⊢7@{tls∧~nobits}⊢6@{type=15}⊢5@{type=14}⊢2@{type=257}⊢0@{type=256}⊢1+write+2×~exec
+        group,←(cs≢⍛⍴9),gengroup ⋄ size←secz,cz,gensize ⋄ align←seca,ca,genalign
 
         ⍝ Segments
-        ne←0<size ⋄ seg←(group=1)+2×group≥2 ⍝RX=0,R=1,RW=2
-        class←0 1 2∩ne/seg ⋄ hastls←∨/group∊5 6 ⋄ segstart←{⊃⍸seg=⍵}¨class
+        ne←0<size ⋄ seg←(group=3)+2×group≥4 ⍝RX=0,R=1,RW=2
+        class←0 1 2∩ne/seg ⋄ hastls←∨/group∊7 8 ⋄ segstart←{⊃⍸seg=⍵}¨class
         hdrsz←64+56×1+(≢class)+3×hasdynamic+hastls ⋄ lalign←4096∘⌈@segstart⊢align
 
         ⍝ Actual layouting
@@ -612,7 +623,7 @@ LNK←{o←PS∆ARGS ⍵
         ⍝ Segments continuation
         span←{
             m←seg=⍵ ⋄ x←⌊/m/rel
-            fz←(⌈/x,(m∧~group∊6 7)/(rel+size))-x
+            fz←(⌈/x,(m∧~group∊8 9)/(rel+size))-x
             mz←(⌈/m/(rel+size))-x
             x fz mz
         }¨class
@@ -626,9 +637,9 @@ LNK←{o←PS∆ARGS ⍵
         first←≠g ⋄ last←1⌽first ⋄ groups←first/g
 
         secoff←first/x ⋄ secsz←secoff-⍨last/x+zsize ⋄ secalign←g{⌈/⍵}⌸zalign ⋄ secaddr←base+secoff
-        sectype←(1 1 1 14 15 1 8 8)[groups] ⋄ secflags←(6 2 3 3 3 1027 1027 3)[groups]
-        seclink←groups≢⍛⍴0 ⋄ secinfo←groups≢⍛⍴0 ⋄ secentsize←(0 0 0 8 8 0 0 0)[groups]
-        secnames←('.text' '.rodata' '.data' '.init_array' '.fini_array' '.tdata' '.tbss' '.bss')[groups]
+        sectype←(1 1 1 1 1 14 15 1 8 8)[groups] ⋄ secflags←(6 6 6 2 3 3 3 1027 1027 3)[groups]
+        seclink←groups≢⍛⍴0 ⋄ secinfo←groups≢⍛⍴0 ⋄ secentsize←(0 0 0 0 0 8 8 0 0 0)[groups]
+        secnames←('.init' '.text' '.fini' '.rodata' '.data' '.init_array' '.fini_array' '.tdata' '.tbss' '.bss')[groups]
 
         ⍝Generated dynamic sections
         gennames←hasdynamic/'.interp' '.plt' '.hash' '.dynsym' '.dynstr' '.rela.plt' '.rela.dyn' '.got' '.dynamic'
@@ -642,10 +653,8 @@ LNK←{o←PS∆ARGS ⍵
         secoff,←genrel ⋄ secaddr,←base+genrel ⋄ secsz,←gensize ⋄ secalign,←genalign ⋄ sectype,←gentype
         secflags,←genflags ⋄ seclink,←genlink ⋄ secinfo,←geninfo ⋄ secentsize,←genentsize ⋄ secnames,←gennames
 
-        extra←3 4 5 6∩groups ⋄ extranames←('.init_array' '.fini_array' '.tdata' '.tbss')[extra-3]
-        nameoff←1+¯1↓+\0,1+≢¨names←'.text' '.rodata' '.data' '.bss',extranames,gennames,⊂'.shstrtab' ⋄ shstr←z,∊names,¨z←⎕UCS 0
-        secname←nameoff[(0 1 2 0 0 0 0 3)[groups]] ⋄ secname[rows]←nameoff[4+extra⍳groups[rows←⍸groups∊3 4 5 6]]
-        secname,←nameoff[4+(≢extra)+hasdynamic/⍳9] ⋄ shstrname←⊃⌽nameoff
+        names←secnames,⊂'.shstrtab' ⋄ nameoff←1+¯1↓+\0,1+≢¨names
+        shstr←z,∊names,¨z←⎕UCS 0 ⋄ secname←¯1↓nameoff ⋄ shstrname←⊃⌽nameoff
 
         shstroff←filesz ⋄ shtoff←8ALIGN shstroff+≢shstr ⋄ shnum←2+≢secnames ⋄ shstrndx←1+≢secnames
 
