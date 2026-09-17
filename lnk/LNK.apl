@@ -493,7 +493,7 @@ LNK←{o←PS∆ARGS ⍵
         zero←≢⊃s
         localgotsym←∪rs/⍨live∧(~imported)∧(rs≠zero)∧rt∊gottypes
 
-        symbolic←⍸use∧rt=1 ⋄ relative←⍸o.pie∧live∧~imported∧rs≠zero∧rt=1
+        symbolic←⍸use∧rt=1 ⋄ relative←⍸o.pie∧live∧(~imported)∧(rs≠zero)∧rt=1
 
         ip←(⍳≢pltimport)@pltimport⊢in≢⍛⍴¯1
         ig←(⍳≢gotimport)@gotimport⊢in≢⍛⍴¯1
@@ -536,6 +536,10 @@ LNK←{o←PS∆ARGS ⍵
     (layout copies sections segments)←{(h s common startsym)←⍵
         (hn ht hf hm hx hz ha he hl hi)←h ⋄ (sn sb st so ss sv sz)←s ⋄ (cs cz ca)←common
         (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
+        (hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab)←dynparts
+        gen←hasdynamic/interp plt hash dynsym dynstr relaplt dynrela got dyntab ⋄ gensize←≢¨gen
+        gengroup←hasdynamic/1 0 1 1 1 1 1 2 2 ⋄ genalign←hasdynamic/1 16 8 8 1 8 8 8 8
+
         alloc←seckeep∧2|⌊hf÷2 ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
         secz←hz[secs] ⋄ seca←1⌈ha[secs]
 
@@ -544,17 +548,18 @@ LNK←{o←PS∆ARGS ⍵
         ∨/~seca∊2*⍳63:'Unsupported section alignment'⎕SIGNAL 200
 
         nobits←type=8 ⋄ group←((~exec)+write)+3×nobits ⋄ nsec←≢secs
-        group,←(≢cs)⍴5 ⋄ size←secz,cz ⋄ align←seca,ca
+        group,←(cs≢⍛⍴5),gengroup ⋄ size←secz,cz,gensize ⋄ align←seca,ca,genalign
         ∨/group∊3 4:'Unsupported NOBITS output-section flags'⎕SIGNAL 200
 
         ⍝ Segments
         ne←0<size ⋄ seg←(group=1)+2×group∊2 5 ⍝RX=0,R=1,RW=2
         class←0 1 2∩ne/seg ⋄ segstart←{⊃⍸seg=⍵}¨class
-        hdrsz←64+56×1+≢class ⋄ lalign←4096∘⌈@segstart⊢align
+        hdrsz←64+56×1+(≢class)+2×hasdynamic ⋄ lalign←4096∘⌈@segstart⊢align
 
         ⍝ Actual layouting
         (order rel memsz)←hdrsz LAYOUT group size lalign
-        secrel←nsec↑rel ⋄ comrel←nsec↓rel
+        secrel←nsec↑rel ⋄ rest←nsec↓rel
+        comrel←cs≢⍛↑rest ⋄ genrel←cs≢⍛↓rest
 
         file←~nobits ⋄ filesec←file/secs
         foff←file/secrel ⋄ fsz←hz[filesec]
@@ -564,7 +569,7 @@ LNK←{o←PS∆ARGS ⍵
 
         shoff←foff@filesec⊢(≢ht)⍴¯1
         shaddr←(base+secrel)@secs⊢(≢ht)⍴0
-        filesz←⌈/hdrsz,foff+fsz
+        filesz←⌈/hdrsz,(foff+fsz),genrel+gensize
 
         reg←ss≥0 ⋄ abs←ss=¯2
         symaddr←reg\(shaddr[reg/ss]+reg/sv) ⋄ symaddr[⍸abs]←abs/sv
@@ -599,9 +604,13 @@ LNK←{o←PS∆ARGS ⍵
         outfilesz←shtoff+64×shnum
 
         entry←symaddr[startsym]
-        layout←shoff shaddr symaddr filesz memsz entry
+        dynlayout←genrel(base+genrel)
+        layout←shoff shaddr symaddr filesz memsz entry dynlayout
         osec←secname sectype secflags secaddr secoff secsz secalign
-        segments←pt pf px pv pv pfz pmz pa
+        special←{~hasdynamic:8⍴⊂⍬
+            x←genrel[0 8] ⋄ z←gensize[0 8]
+            (3 2)(4 6)x(base+x)(base+x)z z(1 8)}⍬
+        segments←(pt pf px pv pv pfz pmz pa),¨special
         sections←shnum shstr shstrname shstroff shtoff shstrndx outfilesz osec
         layout copies sections segments
     }h s common startsym
@@ -620,7 +629,7 @@ LNK←{o←PS∆ARGS ⍵
     ⍬}⍬
 
     ⍝ Apply static relocations
-    _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r ⋄ (lx la ls lfz lmz le)←layout
+    _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r ⋄ (lx la ls lfz lmz le ld)←layout
         rr←⍸0≤lx[rh] ⋄ type←rt[rr]
         ∨/~type∊1 2 4:'Unsupported relocation type'⎕SIGNAL 200
         pc32←type∊2 4
@@ -644,7 +653,7 @@ LNK←{o←PS∆ARGS ⍵
     secname sectype secflags secaddr secoff secsz secalign←osec
 
     ⍝ Construct headers
-    header←{(lx la ls lfz lmz le)←layout ⋄ (pt pf px pv pp pfz pmz pa)←segments
+    header←{(lx la ls lfz lmz le ld)←layout ⋄ (pt pf px pv pp pfz pmz pa)←segments
         ident←ELF∆IDENT∆EXP,7⍴0
         ehdr←,ident
         ehdr,←2 SB 2 62
