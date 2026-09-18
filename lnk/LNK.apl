@@ -855,35 +855,29 @@ LNK←{o←PS∆ARGS ⍵
         rr←⍸0≤lx[rh] ⋄ type←rt[rr] ⋄ gottypes←9 41 42
         ∨/~type∊1 2 4 9 19 20 21 41 42:'Unsupported relocation type'⎕SIGNAL 200
 
-        pc32←type∊2 4 9 19 20 41 42
-        width←8 4[type≠1] ⋄ target←rh[rr] ⋄ offset←rx[rr] ⋄ targetz←hz[target]
-        ∨/(offset>targetz)∨width>targetz-offset:'Relocation target outside section'⎕SIGNAL 200
-
         tlssec←⍸(0≤lx)∧1024≤2048|hf ⋄ tlsbase←{0=≢⍵:0 ⋄ ⌊/la[⍵]}tlssec
         (nplt nglob nlocal ngd)←≢¨pltimport gotimport localgotsym gdimport ⋄ ntlsdesc←hasld+ngd
         tlsdescaddr←da[7]+8×(nplt+nglob+nlocal)+2×⍳ntlsdesc ⋄ tlsldaddr←hasld×⊃tlsdescaddr,0 ⋄ tlsgdaddr←hasld↓tlsdescaddr
 
-
-        where←lx[target]+offset ⋄ S←ls[rs[rr]] ⋄ A←ra[rr] ⋄ P←la[target]+offset
-        import←ri[rr] ⋄ imported←import≥0
-        pltref←⍸imported∧type=4 ⋄ gotref←⍸imported∧type∊gottypes ⋄ localgotref←⍸(~imported)∧type∊gottypes
-        nplt←≢pltimport ⋄ nglob←≢gotimport
-        tlsldref←⍸type=20 ⋄ tlsgdref←⍸type=19 ⋄ dtpoffref←⍸type=21
-        S[pltref]←da[1]+16×ip[import[pltref]]
-        S[gotref]←da[7]+8×nplt+ig[import[gotref]]
-        S[localgotref]←da[7]+8×nplt+nglob+lg[rs[rr[localgotref]]]
-        S[tlsldref]←tlsldaddr ⋄ S[tlsgdref]←tlsgdaddr[igt[import[tlsgdref]]] ⋄ S[dtpoffref]←ls[rs[rr[dtpoffref]]]-tlsbase
-        value←S+A-P×pc32
-        ∨/(width=4)∧(value<-2*31)∨value≥2*31:'Relocation value overflow'⎕SIGNAL 200
-
         batchbytes←2*20 ⍝ avoid large allocation for temporary arrays.
         _←{w←⍵
-            rows←⍸width=w ⋄ count←≢rows ⋄ span←⌈batchbytes÷1⌈w
-            _←{first←⍵×span ⋄ sel←rows[first+⍳span⌊count-first]
-                bytes←⊖(w⍴256)⊤value[sel]
-                out[(⍳w)∘.+where[sel]]←bytes-256×bytes≥128
+            rows←⍸(8 4[type≠1])=w ⋄ count←≢rows ⋄ span←⌈batchbytes÷1⌈w
+            _←{first←⍵×span ⋄ q←rr[rows[first+⍳span⌊count-first]]
+                kind←rt[q] ⋄ target←rh[q] ⋄ offset←rx[q] ⋄ targetz←hz[target]
+                ∨/(offset>targetz)∨w>targetz-offset:'Relocation target outside section'⎕SIGNAL 200
+                where←lx[target]+offset ⋄ S←ls[rs[q]] ⋄ import←ri[q] ⋄ imported←import≥0
+                pltref←⍸imported∧kind=4 ⋄ gotref←⍸imported∧kind∊gottypes ⋄ localgotref←⍸(~imported)∧kind∊gottypes
+                tlsldref←⍸kind=20 ⋄ tlsgdref←⍸kind=19 ⋄ dtpoffref←⍸kind=21
+                S[pltref]←da[1]+16×ip[import[pltref]]
+                S[gotref]←da[7]+8×nplt+ig[import[gotref]]
+                S[localgotref]←da[7]+8×nplt+nglob+lg[rs[q[localgotref]]]
+                S[tlsldref]←tlsldaddr ⋄ S[tlsgdref]←tlsgdaddr[igt[import[tlsgdref]]] ⋄ S[dtpoffref]←ls[rs[q[dtpoffref]]]-tlsbase
+                value←S+ra[q]-(la[target]+offset)×kind∊2 4 9 19 20 41 42
+                ∨/(w=4)∧(value<-2*31)∨value≥2*31:'Relocation value overflow'⎕SIGNAL 200
+                bytes←⊖(w⍴256)⊤value
+                out[(⍳w)∘.+where]←bytes-256×bytes≥128
             ⍬}¨⍳⌈count÷span
-        ⍬}¨∪width
+        ⍬}¨∪8 4[type≠1]
     ⍬}⍬
 
     (shnum shstr shstrname shstroff shtoff shstrndx outfilesz osec)←sections
