@@ -150,9 +150,10 @@ LNK←{o←PS∆ARGS ⍵
         ∨/hn≥hz[shstr[hm]]:'Section name outside string table'⎕SIGNAL 200
 
         rows←⍸(ht=1)∧(2|⌊hf÷2)∧2|⌊hf÷4
-        name←↑{i←⍵ ⋄ obj←hm[i] ⋄ n←6⌊hz[shstr[obj]]-hn[i]
-            6↑(⊃fb[vm[obj]])[vx[obj]+hx[shstr[obj]]+hn[i]+⍳n]
-        }¨rows
+        obj←hm[rows] ⋄ map←vm[obj] ⋄ at←vx[obj]+hx[shstr[obj]]+hn[rows]
+        name←(≢rows)6⍴0 ⋄ left←hz[shstr[obj]]-hn[rows] ⋄ full←6≤left
+        _←{r←⍸full∧map=⍵ ⋄ index←,at[r]∘.+⍳6
+            name[r;]←(≢r)6⍴(⊃fb[⍵])[index] ⋄ ⍬}¨∪full/map
         ht←257@(rows/⍨name∧.=(83⎕DR'.fini'),0)⊢256@(rows/⍨name∧.=(83⎕DR'.init'),0)⊢ht
 
         files←fb views fh0 eshnum
@@ -236,7 +237,7 @@ LNK←{o←PS∆ARGS ⍵
     archiveindex←{(am ax az at)←archives ⋄ (fb view fh0 fhn)←files
         keep←az≠8
         (am ax az at)←keep∘/¨am ax az at
-        0=≢am:⍬ ⍬ ⍬ ⍬ ⍬ ⍬
+        0=≢am:⍬ ⍬(⍬ ⍬ ⍬ ⍬ 0 0)⍬ ⍬ ⍬ ⍬ 0 ⍬ ⍬
         ∨/az<68:'Archive is too small for its symbol index'⎕SIGNAL 200
 
         mh←↑{(⊃fb[am[⍵]])[ax[⍵]+8+⍳60]}¨⍳≢am
@@ -279,16 +280,37 @@ LNK←{o←PS∆ARGS ⍵
         first←≠owner ⋄ start←1+¯1,¯1↓zeros ⋄ start[⍸first]←poolstart[first/owner] ⋄ len←zeros-start
         ∨/(≢member)≠≢start:'Archive symbol-index count does not match its names'⎕SIGNAL 200
 
-        ⍝ Names remain raw byte vectors.
-        name←{pool[start[⍵]+⍳len[⍵]]}¨⍳≢start
+        ⍝ Bucket raw names by length for major-cell lookup without enclosed vectors.
+        length←∪len ⋄ rows←{⍸len=⍵}¨length
+        name←{r←⊃rows[⍵] ⋄ index←,start[r]∘.+⍳length[⍵] ⋄ ((≢r),length[⍵])⍴pool[index]}¨⍳≢length
+        origin←{m←⊃name[⍵] ⋄ m⍳m}¨⍳≢length
+        first←{(⍳≢⍵)=⍵}¨origin ⋄ unique←+/¨first ⋄ number←{¯1++\⍵}¨first
+        base←¯1↓+\0,unique
+        indexed←(≢len)⍴0 ⋄ _←{indexed[⊃rows[⍵]]←base[⍵]+(⊃number[⍵])[⊃origin[⍵]] ⋄ ⍬}¨⍳≢length
+        name←{(⊃first[⍵])⌿⊃name[⍵]}¨⍳≢length ⋄ id←{base[⍵]+⍳unique[⍵]}¨⍳≢length
+        names←length rows name id(≢len)(+/unique)
+        off←ax[owner]+member ⋄ step←1+⌈/¯1,off ⋄ key←off+step×am[owner]
+        members←∪key ⋄ recordmember←members⍳key
+        first←≠indexed ⋄ firstrow←(+/unique)⍴≢indexed ⋄ firstrow[first/indexed]←first/⍳≢indexed
         ⍝ archive mapping, member-header offset, symbol name, thin, long-name offset and size
-        am[owner](ax[owner]+member)name(at[owner])(longx[owner])(longz[owner])
+        am[owner]off names(at[owner])(longx[owner])(longz[owner])recordmember(≢members)indexed firstrow
     }⍬
 
+    SLICEIDS←{files slices←⍵ ⋄ (pool at len)←slices
+        (length rows name id total nids)←2⊃archiveindex
+        0=≢length:(≢len)⍴¯1
+        result←(≢len)⍴¯1
+        order←⍸len>0 ⋄ order←order[⍋len[order]] ⋄ sorted←len[order] ⋄ present←∪sorted ⋄ bylength←sorted{⊂⍵}⌸order
+        _←{i←⍵ ⋄ r←⊃bylength[present⍳length[i]]
+            matrix←((≢r),length[i])⍴pool[,at[r]∘.+⍳length[i]]
+            hit←(⊃name[i])⍳matrix ⋄ found←hit<≢⊃id[i]
+            result[found/r]←(⊃id[i])[found/hit] ⋄ ⍬}¨⍸length∊present
+        result}
+
     ⍝ Decode ELF objects tables
-    TABLES←{files h←⍵
+    SYMBOLS←{files h←⍵
         ⍝ Decode symbols
-        (s symbase)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
+        (s symbase slices)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
             symsh←⍸ht=2 ⋄ symobj←hm[symsh] ⋄ symx←hx[symsh] ⋄ symz←hz[symsh]
             count←symz÷24
             ∨/24≠he[symsh]:'Unexpected symbol entry size'⎕SIGNAL 200
@@ -314,38 +336,42 @@ LNK←{o←PS∆ARGS ⍵
             strsh←fh0[symobj]+hl[symsh]
             ∨/hm[strsh]≠symobj:'Symbol table links outside its object'⎕SIGNAL 200
             strx←hx[strsh] ⋄ strz←hz[strsh] ⋄ strstart←¯1↓+\0,strz
-            strpool←∊(vx[symobj]+strx+⍳¨strz)(⊂⍛⌷)¨fb[vm[symobj]]
-
-            nameat←strstart[own]+sn
-            ∨/0≠strpool[strstart+strz-1]:'Invalid symbol string table'⎕SIGNAL 200
-            zeros←⍸strpool=0 ⋄ namelen←zeros[(zeros⍸nameat)+0≠strpool[nameat]]-nameat
-            sn←{strpool[nameat[⍵]+⍳namelen[⍵]]}¨⍳≢sn
-
-            s←sn sb st so ss sv sz
-            s symbase
+            sn∨.≥strz[own]:'Symbol name outside string table'⎕SIGNAL 200
+            named←sb≠0 ⋄ gsh←⍸ht=17
+            named[symbase[fh0[hm[gsh]]+hl[gsh]]+hi[gsh]]←1
+            pool←∊(vx[symobj]+strx+⍳¨strz)(⊂⍛⌷)¨fb[vm[symobj]]
+            0∨.≠pool[strstart+strz-1]:'Invalid symbol string table'⎕SIGNAL 200
+            at←strstart[own]+sn ⋄ zero←⍸pool=0 ⋄ namelen←(≢sn)⍴0
+            rows←⍸named ⋄ namelen[rows]←zero[(zero⍸at[rows])+0≠pool[at[rows]]]-at[rows]
+            slices←pool at namelen
+            s←((≢sn)⍴0)sb st so ss sv sz
+            s symbase slices
         }⍬
 
-        ⍝ Decode RELA
-        r←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
-            relash←⍸ht=4 ⋄ relaobj←hm[relash] ⋄ relax←hx[relash] ⋄ relaz←hz[relash]
-            count←relaz÷24
-            ∨/24≠he[relash]:'Unexpected RELA entry size'⎕SIGNAL 200
-            ∨/0≠24|relaz:'Unexpected RELA section size'⎕SIGNAL 200
-
-            words←(+/count)6⍴323⎕DR∊(vx[relaobj]+relax+⍳¨relaz)(⊂⍛⌷)¨fb[vm[relaobj]]
-
-            rx←words U64 0 ⋄ (rt rawsym)←{U32 words[;⍵]}¨2 3 ⋄ ra←words S64 4
-            own←count/⍳≢count ⋄ rh←(fh0[relaobj]+hi[relash])[own]
-
-            symsh←fh0[relaobj]+hl[relash] ⋄ base←symbase[symsh]
-            ∨/¯1=base:'RELA does not reference a symbol table'⎕SIGNAL 200
-            rs←base[own]+rawsym
-
-            rh rx rs rt ra
-        }⍬
-        s r symbase
+        s symbase slices
     }
-    (s r symbase)←TABLES files h
+    (s symbase slices)←SYMBOLS files h
+
+    RELOCATIONS←{files h symbase keep←⍵ ⋄ (hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
+        relash←⍸ht=4 ⋄ target←fh0[hm[relash]]+hi[relash] ⋄ relash←(keep[relash]∧keep[target])/relash
+        relaobj←hm[relash] ⋄ relax←hx[relash] ⋄ relaz←hz[relash]
+        count←relaz÷24
+        ∨/24≠he[relash]:'Unexpected RELA entry size'⎕SIGNAL 200
+        ∨/0≠24|relaz:'Unexpected RELA section size'⎕SIGNAL 200
+
+        map←vm[relaobj] ⋄ src←vx[relaobj]+relax ⋄ dst←¯1↓+\0,relaz ⋄ raw←(+/relaz)⍴0
+        _←{0=≢map:⍬ ⋄ _←{r←⍸map=⍵ ⋄ z←relaz[r] ⋄ at←¯1↓+\0,z ⋄ batch←⌊at÷2*20
+            _←{q←(batch=⍵)/r ⋄ n←relaz[q] ⋄ base←¯1↓+\0,n ⋄ i←⍳+/n
+                raw[i+n/dst[q]-base]←(⊃fb[map[⊃q]])[i+n/src[q]-base] ⋄ ⍬}¨∪batch ⋄ ⍬}¨∪map ⋄ ⍬}⍬
+        words←(+/count)6⍴323⎕DR raw
+        rx←words U64 0 ⋄ (rt rawsym)←{U32 words[;⍵]}¨2 3 ⋄ ra←words S64 4
+        own←count/⍳≢count ⋄ rh←(fh0[relaobj]+hi[relash])[own]
+
+        symsh←fh0[relaobj]+hl[relash] ⋄ base←symbase[symsh]
+        ∨/¯1=base:'RELA does not reference a symbol table'⎕SIGNAL 200
+        rs←base[own]+rawsym
+        rh rx rs rt ra
+    }
 
     COMDAT←{files h s symbase←⍵
         (hn ht hf hm hx hz ha he hl hi)←h ⋄(fb view fh0 fhn)←files ⋄ (vm vx vz)←view ⋄ (sn sb st so ss sv sz)←s
@@ -372,27 +398,28 @@ LNK←{o←PS∆ARGS ⍵
     }
 
     ⍝ Select archive members required by direct objects
-    SELECT←{files s picked←⍵ ⋄ (fb view fh0 fhn)←files ⋄ (sn sb st so ss sv sz)←s ⋄ (am ax an at alx alz)←archiveindex
-        0=≢am:(⍬ ⍬ ⍬)⍬ picked
+    SELECT←{files need selected←⍵ ⋄ (fb view fh0 fhn)←files ⋄ (am ax an at alx alz recordmember membercount indexed firstrow)←archiveindex
+        0=≢am:(⍬ ⍬ ⍬)⍬ selected
 
-        strong←sb∊1 10 ⋄ defined←strong∧ss≠¯1 ⋄ undefined←strong∧ss=¯1
-        need←∪(undefined/sn)~defined/sn
-
-        ⍝ Select the first archive-index entry for each required name
-        rows←an⍳need ⋄ rows←rows/⍨rows<≢an
-        0=≢rows:(⍬ ⍬ ⍬)⍬ picked
+        ⍝ Preserve unresolved-symbol order while using dense archive-name IDs.
+        rows←firstrow[need] ⋄ rows←rows/⍨rows<≢indexed
+        rows←rows/⍨~selected[recordmember[rows]]
+        0=≢rows:(⍬ ⍬ ⍬)⍬ selected
 
         ⍝ Several symbols can select the same archive member
-        key←am[rows],¨ax[rows]
-        first←≠key ⋄ rows←first/rows ⋄ key←first/key
-        new←~key∊picked ⋄ rows←new/rows ⋄ key←new/key
-        0=≢rows:(⍬ ⍬ ⍬)⍬ picked
+        rows←(≠indexed[rows])/rows
+        member←recordmember[rows] ⋄ first←≠member ⋄ rows←first/rows ⋄ member←first/member
+        new←~selected[member] ⋄ rows←new/rows ⋄ member←new/member
+        0=≢rows:(⍬ ⍬ ⍬)⍬ selected
+        selected[member]←1
 
         thin←at[rows] ⋄ lx←alx[rows] ⋄ lz←alz[rows]
         map←am[rows] ⋄ off←ax[rows] ⋄ limit←≢¨fb[map]
         ∨/(off>limit)∨60>limit-off:'Archive member header outside archive'⎕SIGNAL 200
 
-        mh←↑{(⊃fb[map[⍵]])[off[⍵]+⍳60]}¨⍳≢rows
+        mh←(≢rows)60⍴0
+        _←{r←⍸map=⍵ ⋄ index←,off[r]∘.+⍳60
+            mh[r;]←(≢r)60⍴(⊃fb[⍵])[index] ⋄ ⍬}¨∪map
         ∨/~mh[;58 59]∧.=96 10:'Invalid archive member header'⎕SIGNAL 200
 
         digit←mh[;48+⍳10]
@@ -435,30 +462,85 @@ LNK←{o←PS∆ARGS ⍵
         map[tr]←(≢fb)+⍳≢newfb ⋄ data[tr]←0 ⋄ size[tr]←≢¨newfb
 
         ⍝Selected ELF views: mapping, file offset, size
-        (map data size)newfb(picked,key)
+        (map data size)newfb selected
     }
 
     ⍝ Archive-member discovery step
-    (files h s r symbase selected picked)←{(files h s r symbase selected picked)←⍵
-        (selected newfb picked)←SELECT files s picked
-        0=≢⊃selected:files h s r symbase selected picked
+    (sn sb st so ss sv sz)←s ⋄ strong←sb∊1 10
+    sid←SLICEIDS files slices ⋄ nids←5⊃2⊃archiveindex ⋄ defmask←nids⍴0
+    ids←(strong∧ss≠¯1)/sid ⋄ defmask[(0≤ids)/ids]←1
+    need←∪(strong∧ss=¯1∧sid≥0)/sid ⋄ need←need/⍨~defmask[need]
+    hparts←,⊂h ⋄ sparts←,⊂s ⋄ bparts←,⊂symbase ⋄ nparts←,⊂slices ⋄ iparts←,⊂sid
+    hbase←≢⊃h ⋄ sbase←≢⊃s
+    (files hparts sparts bparts nparts iparts hbase sbase selected picked defmask need)←{(files hparts sparts bparts nparts iparts hbase sbase selected picked defmask need)←⍵
+        (selected newfb picked)←SELECT files need picked
+        0=≢⊃selected:files hparts sparts bparts nparts iparts hbase sbase selected picked defmask need
 
         (ofb ov ofh0 ofhn)←files ⋄ fb←ofb,newfb
-        (nfiles nh)←1 ELF fb selected ⋄ (ns nr nb)←TABLES nfiles nh
+        (nfiles nh)←1 ELF fb selected ⋄ (ns nb nn)←SYMBOLS nfiles nh
         (ovm ovx ovz)←ov ⋄ (nfb nv nfh0 nfhn)←nfiles ⋄ (nvm nvx nvz)←nv
-        vbase←≢ovm ⋄ hbase←≢⊃h ⋄ sbase←≢⊃s
+        vbase←≢ovm
 
         (nhn nht nhf nhm nhx nhz nha nhe nhl nhi)←nh ⋄ nhm+←vbase ⋄ nh←nhn nht nhf nhm nhx nhz nha nhe nhl nhi
         (nsn nsb nst nso nss nsv nsz)←ns ⋄ nss←hbase∘+@{⍵≥0}⊢nss ⋄ ns←nsn nsb nst nso nss nsv nsz
-        (nrh nrx nrs nrt nra)←nr ⋄ nrh+←hbase ⋄ nrs+←sbase ⋄ nr←nrh nrx nrs nrt nra
         nb←sbase∘+@{⍵≥0}⊢nb
         view←(ovm,nvm)(ovx,nvx)(ovz,nvz) ⋄ files←fb view(ofh0,hbase+nfh0)(ofhn,nfhn)
-        h←h,¨nh ⋄ s←s,¨ns ⋄ r←r,¨nr ⋄ symbase,←nb
+        hparts,←⊂nh ⋄ sparts,←⊂ns ⋄ bparts,←⊂nb ⋄ nparts,←⊂nn
+        hbase+←≢⊃nh ⋄ sbase+←≢⊃ns
+        nstrong←nsb∊1 10 ⋄ nid←SLICEIDS nfiles nn ⋄ iparts,←⊂nid
+        ids←(nstrong∧nss≠¯1)/nid ⋄ defmask[(0≤ids)/ids]←1
+        new←(nstrong∧nss=¯1∧nid≥0)/nid ⋄ need←∪need,new
+        need←need/⍨~defmask[need]
 
-        files h s r symbase selected picked
-    }⍣{(_ _ _ _ _ selected _)←⍺ ⋄ 0=≢⊃selected}⊢files h s r symbase(⍬ ⍬ ⍬)⍬
+        files hparts sparts bparts nparts iparts hbase sbase selected picked defmask need
+    }⍣{(_ _ _ _ _ _ _ _ selected _ _ _)←⍺ ⋄ 0=≢⊃selected}⊢files hparts sparts bparts nparts iparts hbase sbase(⍬ ⍬ ⍬)((7⊃archiveindex)⍴0)defmask need
+    h←⊃¨,/¨↓⍉↑hparts ⋄ s←⊃¨,/¨↓⍉↑sparts ⋄ symbase←∊bparts
+    pools←0⊃¨nparts ⋄ poolbase←¯1↓+\0,≢¨pools
+    slices←(∊pools)(∊poolbase+¨1⊃¨nparts)(∊2⊃¨nparts)
+    sid←∊iparts
+    hparts←sparts←bparts←nparts←iparts←⍬
+    ⍝ Intern object, DSO, archive and synthetic names into one exact dense domain.
+    (fb view fh0 fhn)←files
+    (sn sb st so ss sv sz)←s ⋄ (dobj dn db dt dvis dv dz)←ds
+    special←83⎕DR¨'_start' '_GLOBAL_OFFSET_TABLE_' '_init' '_fini'
+    (pool oat olen)←slices ⋄ x←dn,special ⋄ xlen←≢¨x
+    (alen arows amat aid atotal anids)←2⊃archiveindex
+    (nbase nbytes objectid xid)←{
+        xaid←(≢x)⍴¯1
+        _←{0=anids:⍬ ⋄ _←{i←⍵ ⋄ q←⍸xlen=alen[i] ⋄ hit←(⊃amat[i])⍳((≢q),alen[i])⍴∊x[q]
+            found←hit<≢⊃aid[i] ⋄ xaid[found/q]←(⊃aid[i])[found/hit] ⋄ ⍬}¨⍳≢alen ⋄ ⍬}⍬
+        or←⍸(sid<0)∧olen>0 ⋄ xr←⍸xaid<0 ⋄ length←∪olen[or],xlen[xr]
+        ROWS←{value rows←⍵ ⋄ 0=≢rows:(≢length)⍴⊂⍬
+            p←⍋value[rows] ⋄ sorted←value[rows[p]] ⋄ present←∪sorted ⋄ group←sorted{⊂⍵}⌸rows[p]
+            lookup←(1+⌈/0,length)⍴¯1 ⋄ lookup[present]←⍳≢present
+            ((⊂⍬),group)[1+lookup[length]]}
+        orows←ROWS olen or ⋄ xrows←ROWS xlen xr
+        buckets←{i←⍵ ⋄ r←⊃orows[i] ⋄ q←⊃xrows[i] ⋄ width←length[i]
+            matrix←((≢r),width)⍴pool[,oat[r]∘.+⍳width]
+            matrix⍪←((≢q),width)⍴∊x[q]
+            origin←matrix⍳matrix ⋄ first←(⍳≢matrix)=origin
+            (first⌿matrix)(¯1+(+\first)[origin])(≢r)}¨⍳≢length
+        bytes←0⊃¨buckets ⋄ base←anids+¯1↓+\0,≢¨bytes
+        oid←sid ⋄ id←xaid
+        _←{r←⊃orows[⍵] ⋄ q←⊃xrows[⍵] ⋄ all←base[⍵]+1⊃⊃buckets[⍵]
+            oid[r]←(≢r)↑all ⋄ id[q]←(≢q)↑(≢r)↓all ⋄ ⍬}¨⍳≢length
+        abase abytes←{0=anids:⍬ ⍬ ⋄ (⊃¨aid)({(≠⊃aid[⍵])⌿⊃amat[⍵]}¨⍳≢alen)}⍬
+        (abase,base)(abytes,bytes)oid id
+    }⍬
+    nname←+/≢¨nbytes ⋄ NAME←{b←nbase⍸⍵ ⋄ (⊃nbytes[b])[⍵-nbase[b];]}
+    nd←≢dn ⋄ sn←objectid ⋄ dn←nd↑xid ⋄ specialid←nd↓xid
+    s←sn sb st so ss sv sz ⋄ ds←dobj dn db dt dvis dv dz
+    slices←sid←archiveindex←⍬
 
     (s seckeep)←COMDAT files h s symbase
+    r←RELOCATIONS files h symbase seckeep
+    symbase←⍬
+
+    ⍝ Discard dead COMDAT sections once and globalise every surviving section reference.
+    secid←¯1++\seckeep
+    (sn sb st so ss sv sz)←s ⋄ rows←⍸ss≥0 ⋄ ss[rows]←secid[ss[rows]] ⋄ s←sn sb st so ss sv sz
+    (rh rx rs rt ra)←r ⋄ rh←secid[rh] ⋄ r←rh rx rs rt ra
+    h←seckeep∘/¨h
 
     ⍝ Symbol resolution
     (r ri imports common startsym)←{(s ds r)←⍵ ⋄ (rh rx rs rt ra)←r
@@ -467,13 +549,12 @@ LNK←{o←PS∆ARGS ⍵
         reg←ss≥0 ⋄ abs←ss=¯2 ⋄ com←ss=¯3
         weak←sb=2 ⋄ strong←(sb=1)∨sb=10 ⋄ ext←strong∨weak
         defd←reg∨abs∨com
-        names←∪sn ⋄ sid←names⍳sn
-        gotdef←sn∊⊂83⎕DR'_GLOBAL_OFFSET_TABLE_'
-        ∨/~≠(strong∧defd∧~com)/sid:'Multiple strong symbol definitions'⎕SIGNAL 200
+        sid←sn ⋄ gotdef←sn=1⊃specialid
+        ∨/~≠(strong∧defd∧~com)/sn:'Multiple strong symbol definitions'⎕SIGNAL 200
 
         def←⍸ext∧defd ⋄ def←def[⍋com[def]+2×weak[def]] ⋄ def←(≠sid[def])/def
 
-        zero←≢sn ⋄ byname←def@(sid[def])⊢(≢names)⍴zero
+        zero←≢sn ⋄ byname←def@(sid[def])⊢nname⍴zero
 
         ⍝ Resolve external symbol rows against objects, then DSOs.
         erow←⍸ext∧~defd ⋄ local←byname[sid[erow]] ⋄ drow←dn⍳sn[erow]
@@ -497,9 +578,7 @@ LNK←{o←PS∆ARGS ⍵
         ∨/st[real/rdef]=10:'GNU IFUNC relocation is not supported yet'⎕SIGNAL 200
 
         ⍝ Identify entry point
-        start←names⍳⊂83⎕DR'_start'
-        start=≢names:'Undefined symbol: _start'⎕SIGNAL 200
-        startsym←byname[start]
+        startsym←byname[0⊃specialid]
         startsym=zero:'Undefined symbol: _start'⎕SIGNAL 200
 
         ⍝ Common symbols
@@ -515,7 +594,7 @@ LNK←{o←PS∆ARGS ⍵
 
     ⍝ Dynamic relocation plan
     dplan←{(h r ri imports)←⍵ ⋄ (hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r ⋄ (in ib idso it iz)←imports
-        backed←(ht≠8)∧2|⌊hf÷2 ⋄ live←seckeep[rh]∧backed[rh] ⋄ imported←ri≥0 ⋄ gottypes←9 41 42
+        backed←(ht≠8)∧2|⌊hf÷2 ⋄ live←backed[rh] ⋄ imported←ri≥0 ⋄ gottypes←9 41 42
 
         use←live∧imported
         ∨/use∧~rt∊1 4 19,gottypes:'Unsupported dynamic relocation type'⎕SIGNAL 200
@@ -539,7 +618,7 @@ LNK←{o←PS∆ARGS ⍵
 
         used←(⍳≢sm)∊idso ⋄ dkeep←used∨~optional[sm] ⋄ neededname←dkeep/soname
 
-        strings←in,neededname ⋄ x←1+¯1↓+\0,len←1+≢¨strings
+        strings←(NAME¨in),neededname ⋄ x←1+¯1↓+\0,len←1+≢¨strings
         ix←in≢⍛↑x ⋄ nx←in≢⍛↓x ⋄ dynstr←0,∊{⍵,0}¨strings
         n←≢in ⋄ at←24+24×⍳n
         info←it+16×ib ⋄ info←info-256×info≥128
@@ -550,11 +629,11 @@ LNK←{o←PS∆ARGS ⍵
 
     ⍝ Lifecycle inputs
     life←{(s h)←⍵ ⋄ (sn sb st so ss sv sz)←s ⋄ (hn ht hf hm hx hz ha he hl hi)←h
-        live←(ss≥0)∧seckeep[0⌈ss]
+        live←ss≥0
 
-        ROW←{r←⍸live∧sn∊⊂83⎕DR⍵ ⋄ ⊃r,¯1}
-        initrow←ROW'_init' ⋄ finirow←ROW'_fini'
-        initsec←⍸seckeep∧ht=14 ⋄ finisec←⍸seckeep∧ht=15
+        ROW←{r←⍸live∧sn=⍵ ⋄ ⊃r,¯1}
+        initrow←ROW 2⊃specialid ⋄ finirow←ROW 3⊃specialid
+        initsec←⍸ht=14 ⋄ finisec←⍸ht=15
         initrow finirow initsec finisec
     }s h
 
@@ -586,7 +665,7 @@ LNK←{o←PS∆ARGS ⍵
         gen←hasdynamic/interp plt hash dynsym dynstr relaplt dynrela got dyntab ⋄ gensize←≢¨gen
         gengroup←hasdynamic/3 1 3 3 3 3 3 4 4 ⋄ genalign←hasdynamic/1 16 8 8 1 8 8 8 8
 
-        alloc←seckeep∧2|⌊hf÷2 ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
+        alloc←2|⌊hf÷2 ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
         secz←hz[secs] ⋄ seca←1⌈ha[secs]
 
         write←2|flags ⋄ exec←2|⌊flags÷4
@@ -619,7 +698,7 @@ LNK←{o←PS∆ARGS ⍵
 
         reg←ss≥0 ⋄ abs←ss=¯2
         symaddr←reg\(shaddr[reg/ss]+reg/sv) ⋄ symaddr[⍸abs]←abs/sv
-        symaddr[cs]←base+comrel ⋄ symaddr[⍸sn∊⊂83⎕DR'_GLOBAL_OFFSET_TABLE_']←base+7⊃9↑genrel,9⍴0 ⋄ symaddr,←0
+        symaddr[cs]←base+comrel ⋄ symaddr[⍸sn=1⊃specialid]←base+7⊃9↑genrel,9⍴0 ⋄ symaddr,←0
 
         ⍝ Segments continuation
         span←{
@@ -685,13 +764,24 @@ LNK←{o←PS∆ARGS ⍵
 
     ⍝ Copy sections
     _←{(fb view fh0 fhn)←files ⋄ (fm fx fz ox)←copies
-        chunksz←2*20
+        keep←fz>0 ⋄ (fm fx fz ox)←keep∘/¨fm fx fz ox
+        n←≢fz ⋄ join←((1↓fm)=¯1↓fm)∧((1↓fx)=¯1↓fx+fz)∧(1↓ox)=¯1↓ox+fz
+        first←⍸1,~join ⋄ last←¯1+(1↓first),n
+        fm←fm[first] ⋄ fx←fx[first] ⋄ fz←ox[last]+fz[last]-ox[first] ⋄ ox←ox[first]
+        chunksz←2*19 ⋄ batchbytes←chunksz ⋄ small←fz≤chunksz
+        order←⍋ox ⋄ xo←ox[order] ⋄ zo←fz[order]
+        ∨/(1↓xo)<¯1↓xo+zo:'Overlapping input section copies'⎕SIGNAL 200
+        _←{r←⍸small∧fm=⍵ ⋄ start←¯1↓+\0,fz[r] ⋄ batch←⌊start÷batchbytes
+            _←{q←r/⍨batch=⍵ ⋄ z←fz[q] ⋄ at←¯1↓+\0,z ⋄ i←⍳+/z
+                out[i+z/ox[q]-at]←(⊃fb[fm[⊃q]])[i+z/fx[q]-at]
+            ⍬}¨∪batch
+        ⍬}¨∪small/fm
         _←{row←⍵ ⋄ n←fz[row]
             pos←chunksz×⍳⌈n÷chunksz ⋄ obj←⊃fb[fm[row]]
             _←{p←⍵ ⋄ k←chunksz⌊n-p ⋄ i←⍳k
                 out[ox[row]+p+i]←obj[fx[row]+p+i]
             ⍬}¨pos
-        ⍬}¨⍳≢fz
+        ⍬}¨⍸~small
     ⍬}⍬
 
     ⍝ Write dynamic sections
