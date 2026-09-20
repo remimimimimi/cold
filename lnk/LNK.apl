@@ -4,10 +4,37 @@ U32←{⍵+(2*32)×⍵<0} ⋄ U64←{(U32 ⍺[;⍵])+(2*32)×U32 ⍺[;⍵+1]}
 S64←{(U32 ⍺[;⍵])+(2*32)×⍺[;⍵+1]} ⋄ SB←{0=≢⍵:⍬ ⋄ b←,⍉⊖(⍺⍴256)⊤⍵ ⋄ b-256×b≥128}
 ZSTR←{80⎕DR(⍵⍳0)↑⍵} ⋄ ZSTRU←{⎕UCS(⍵⍳0)↑⍵}
 ALIGN←{⍵+⍺|-⍵}
+RELA←{(off info add)←⍵ ⋄ at←24×⍳≢off
+    (8SB add)@(,at∘.+16+⍳8)⊢(8SB info)@(,at∘.+8+⍳8)⊢(8SB off)@(,at∘.+⍳8)⊢0⍴⍨24×≢off}
+
+⍝ Entry point
+LNK←{o←PS∆ARGS ⍵
+    0=≢o.input: 'Expected at least one input file to link'⎕SIGNAL 200
+
+    paths fb direct shared archives optional←INPUTS o
+
+    ⍝ Decode the initial ELF views.
+    (files h ds soname)←DECODE fb direct shared
+
+    ⍝ Complete object discovery and discard every parsing only representation.
+    (f h s ds r n)←OBJECTS paths archives files h ds
+    ⍝ Resolve symbols, then replace ELF special section indices by h rows.
+    (h s r startsym)←RESOLVE n h s ds r
+
+    ⍝ Record PLT, GOT and TLS descriptor slots directly on their symbol rows.
+    (s r)←SLOTS o h s r
+
+    ⍝ Construct the generated tables from h and s.
+    d←DYNAMIC o shared optional soname h s r n
+
+    ⍝ Assign output slices and derive ELF metadata.
+    (h s im)←IMAGE o d n.special h s startsym
+    (im sh ph)←HEADERS o d h im
+    WRITE o f h s r n.special d im sh ph}
 
 PS∆ARGS←{args←⍵
-    ∨/'-h' '--help'∊args:'There should be help printed'⎕SIGNAL 200
-    ∨/'-v' '--version'∊args:'There should be version printed'⎕SIGNAL 200
+    ∨/'-h' '--help'∊args:'There is no help'⎕SIGNAL 200
+    ∨/'-v' '--version'∊args:'0.1.0 or smth'⎕SIGNAL 200
 
     o←⎕NS⍬
     o.out←'a.out' ⋄ o.(input path lib)←⊂⍬ ⋄ o.(static pie)←0
@@ -26,32 +53,74 @@ PS∆ARGS←{args←⍵
 
 SCRIPT←{0=≢⍵:⍬ ⍬ ⋄ src←' '@{'/*'∘(≠\⍷∨¯1⌽∘⌽⍷∘⌽)⍵}⊢⍵
     atom←~src∊' ,;()',⎕UCS 9 10 13 ⋄ paren←src∊'()'
-    begin←paren∨(0,¯1↓atom)<atom
+    begin←paren∨2</0,atom
     tokens←((+\begin)×(atom∨paren))⊆src
-    first←⊃¨tokens ⋄ t←'('(-⍥(first∘=))')' ⋄ d←+\t ⋄ b←d-t
-    (0>⌊/0,d)∨0≠⊢/0,d:'Unbalanced linker-script parentheses'⎕SIGNAL 200
+    head←⊃¨tokens ⋄ t←'('(-⍥(head∘=))')' ⋄ d←+\t ⋄ b←d-t
+    (0>⌊/0,d)∨0≠⊢/0,d:'Unbalanced linker script parentheses'⎕SIGNAL 200
 
     o←⍸t=1
     0=≢o:'Linker script contains no supported inputs'⎕SIGNAL 200
     0∨.≠(1,t)[o]:'Expected command before ('⎕SIGNAL 200
     cmd←1⎕C tokens[o-1]
-    ~∧/cmd∊'INPUT' 'GROUP' 'AS_NEEDED' 'OUTPUT_FORMAT':'Unsupported linker-script command'⎕SIGNAL 200
+    ~∧/cmd∊'INPUT' 'GROUP' 'AS_NEEDED' 'OUTPUT_FORMAT':'Unsupported linker script command'⎕SIGNAL 200
     (cmd∊⊂'AS_NEEDED')∨.∧b[o]=0:'AS_NEEDED must be inside INPUT or GROUP'⎕SIGNAL 200
-    (cmd∊'INPUT' 'GROUP' 'OUTPUT_FORMAT')∨.∧b[o]≠0:'Nested linker-script command'⎕SIGNAL 200
+    (cmd∊'INPUT' 'GROUP' 'OUTPUT_FORMAT')∨.∧b[o]≠0:'Nested linker script command'⎕SIGNAL 200
 
     command←1@(o-1)⊢t≢⍛⍴0
-    command∨.<(t=0)∧b=0:'Unexpected text outside linker-script command'⎕SIGNAL 200
+    command∨.<(t=0)∧b=0:'Unexpected text outside linker script command'⎕SIGNAL 200
     top←o/⍨b[o]=0 ⋄ topcmd←cmd/⍨b[o]=0
     owner←+\1@top⊢t≢⍛⍴0
 
-    rows←command<(t=0)∧(b>0)∧owner⊂⍛⌷0,topcmd∊'INPUT' 'GROUP'
-    ~∨/rows:'Linker script contains no supported inputs'⎕SIGNAL 200
-    (rows/tokens)(rows/b>1)}
+    arg←command<(t=0)∧(b>0)∧owner⊂⍛⌷0,topcmd∊'INPUT' 'GROUP'
+    ~∨/arg:'Linker script contains no supported inputs'⎕SIGNAL 200
+    (arg/tokens)(arg/b>1)}
+
+⍝ Expand command line inputs and scripts, map them, and return only format views.
+INPUTS←{o←⍵ ⋄ ext←o.static↓'.so' '.a'
+    libs←{spec←⍵ ⋄ lib←{'-l'≡2↑⍵}¨spec
+        ~∨/lib:spec
+        0=≢o.path:'Cannot resolve libraries without -L'⎕SIGNAL 200
+        ({name←2↓⍵ ⋄ candidates←,o.path∘.{⍺,'/lib',name,⍵}ext
+            ~∨/exists←⎕NEXISTS¨candidates:('Cannot find ',⍵)⎕SIGNAL 200
+            (exists⍳1)⊃candidates}¨lib/spec)@{lib}⊢spec}
+
+    q←⎕NS⍬ ⋄ q.(paths fb kind thin optional)←⊂⍬
+    q.spec←o.input,('-l'∘,¨o.lib) ⋄ q.specopt←q.spec≢⍛⍴0
+    q←{q←⍵ ⋄ spec specopt←q.(spec specopt)
+        input←libs spec ⋄ mapped←{83 ¯1⎕MAP⍵'R'}¨input ⋄ head←↑64∘↑¨mapped
+        elf←head[;⍳4]∧.=127 69 76 70 ⋄ etype←head[;16]+256×head[;17]
+        elf∨.∧~etype∊1 3:'Unsupported ELF file type'⎕SIGNAL 200
+        thick←head[;⍳8]∧.=33 60 97 114 99 104 62 10
+        thin←head[;⍳8]∧.=33 60 116 104 105 110 62 10
+        script←~binary←elf∨thick∨thin
+
+        parsed←{SCRIPT ⎕UCS 256|⍵}¨(0⍴⊂⍬),script/mapped
+        members←(0⍴⊂'.'),⊃,/(0⊃¨parsed),⊂⍬ ⋄ asneeded←⊃,/(1⊃¨parsed),⊂⍬ ⋄ count←≢∘⊃¨parsed
+        candidate←(count/{⊃1⎕NPARTS ⍵}¨script/input),¨members
+        check←(×≢¨members)∧('-'≠⊃¨members)∧'/'≠⊃¨members
+        local←(⎕NEXISTS¨check/candidate)@{check}⊢members≢⍛⍴0
+        members←(local/candidate)@{local}⊢members
+
+        search←('-'≠⊃¨members)∧~⎕NEXISTS¨members
+        members←{found←{candidates←o.path,¨⊂'/',⍵ ⋄ exists←⎕NEXISTS¨candidates
+                ~∨/exists:('Cannot find linker script input ',⍵)⎕SIGNAL 200
+                (exists⍳1)⊃candidates}¨search/⍵
+            found@{search}⊢⍵}⍣(∨/search)⊢members
+
+        q.paths,←binary/input ⋄ q.fb,←binary/mapped ⋄ q.kind,←binary/etype×elf
+        q.thin,←binary/thin ⋄ q.optional,←binary/specopt
+        q.spec←members ⋄ q.specopt←(count/script/specopt)∨asneeded ⋄ q
+    }⍣{0=≢⍺.spec}⊢q
+
+    paths fb kind thin optional←q.(paths fb kind thin optional)
+    vm←⍳≢fb ⋄ vx←fb≢⍛⍴0 ⋄ ve←≢¨fb
+    rel←kind=1 ⋄ dyn←kind=3 ⋄ ar←kind=0
+    paths fb((rel/vm)(rel/vx)(rel/ve))((dyn/vm)(dyn/vx)(dyn/ve))((ar/vm)(ar/vx)(ar/ve)(ar/thin))optional}
 
 LAYOUT←{group size align←⍵ ⋄ ⍺←0 ⍝ optional origin
     0=n←≢size:⍬ ⍬ ⍺
     p←⍋group ⋄ g←group[p] ⋄ s←size[p] ⋄ a←align[p]
-    a[0,1+⍸2≠/g]←g{⌈/⍵}⌸a
+    a[⍸2≠/¯1,g]←g{⌈/⍵}⌸a
     x←⍺+0,¯1↓+\s ⋄ M←⌈/a
     F←{⍺≥M:⍵ ⋄ m←a>⍺ ⋄ v←2|⌊(m/⍵)÷⍺ ⋄ (2×⍺)∇⍵+⍺×+\m\2≠/0,v}
     x←1 F x ⋄ z←x@p⊢n⍴0
@@ -66,798 +135,816 @@ OUT∆INIT←{size←⍺ ⋄ file←⍵
 
 ELF∆IDENT∆EXP←127 69 76 70 2 1 1 0 0
 
-LNK←{o←PS∆ARGS ⍵
-    0=≢o.input: 'Expected at least one input file to link'⎕SIGNAL 200
+SPECIAL∆START SPECIAL∆GOT SPECIAL∆INIT SPECIAL∆FINI←⍳4
+SPECIAL∆NAME←83⎕DR¨'_start' '_GLOBAL_OFFSET_TABLE_' '_init' '_fini'
 
-    ⍝ Resolve paths and -l
-    ext←o.static↓'.so' '.a'
-    RESOLVE←{spec←⍵
-        lib←{'-l'≡2↑⍵}¨spec
-        ~∨/lib:spec
-        0=≢o.path:'Cannot resolve libraries without -L'⎕SIGNAL 200
+GEN∆INTERP GEN∆PLT GEN∆HASH GEN∆SYM GEN∆STR GEN∆RPLT GEN∆RELA GEN∆GOT GEN∆DYNAMIC←⍳9
+GEN∆NAME←'.interp' '.plt' '.hash' '.dynsym' '.dynstr' '.rela.plt' '.rela.dyn' '.got' '.dynamic'
+GEN∆TYPE← 1  1 5 11 3 4 4 1 6 ⋄ GEN∆FLAGS←  2  6 2  2 2  2  2 3  3
+GEN∆ALIGN←1 16 8  8 1 8 8 8 8 ⋄ GEN∆ENTSIZE←0 16 4 24 0 24 24 8 16
 
-        ({name←2↓⍵
-            candidates←,o.path∘.{⍺,'/lib',name,⍵}ext
-            ~∨/exists←⎕NEXISTS¨candidates:('Cannot find ',⍵)⎕SIGNAL 200
-            (exists⍳1)⊃candidates
-        }¨lib/spec)@{lib}⊢spec}
-    spec←o.input,('-l'∘,¨o.lib)
-    paths fb kind thin optional←5↑{done maps kind thins doneopt spec specopt←⍵
-        paths←RESOLVE spec ⋄ mapped←{83 ¯1⎕MAP⍵'R'}¨paths ⋄ head←↑64∘↑¨mapped
+KIND∆INIT KIND∆TEXT KIND∆FINI KIND∆RODATA KIND∆DATA KIND∆INITARRAY KIND∆FINIARRAY KIND∆TDATA KIND∆TBSS KIND∆BSS←⍳10
+KIND∆NAME←'.init' '.text' '.fini' '.rodata' '.data' '.init_array' '.fini_array' '.tdata' '.tbss' '.bss'
+KIND∆TYPE←   1 1 1 1 1 14 15 1 8 8  ⋄ KIND∆FLAGS←6 6 6 2 3 3 3 1027 1027 3
+KIND∆ENTSIZE←0 0 0 0 0  8  8 0 0 0  ⋄ KIND∆SEG←  0 0 0 1 2 2 2 2    2    2
+GEN∆KIND←KIND∆RODATA KIND∆TEXT KIND∆RODATA KIND∆RODATA KIND∆RODATA KIND∆RODATA KIND∆RODATA KIND∆DATA KIND∆DATA
 
-        elf←head[;⍳4]∧.=127 69 76 70
-        etype←head[;16]+256×head[;17]
-        elf∨.∧~etype∊1 3:'Unsupported ELF file type'⎕SIGNAL 200
+SHT∆NOBITS SHT∆INITARRAY SHT∆FINIARRAY SHT∆INIT SHT∆FINI←8 14 15 256 257
+SHF∆WRITE SHF∆ALLOC SHF∆EXEC SHF∆TLS←1 2 4 1024
 
-        thick←head[;⍳8]∧.=33 60 97 114 99 104 62 10
-        thin←head[;⍳8]∧.=33 60 116 104 105 110 62 10
-        script←~binary←elf∨archive←thick∨thin
+⍝ Decode ELF file views into section rows.
+⍝ [f]ile: [b]ytes [v]iew first-[h]eader header-[n]umber
+⍝ [v]iew: [m]ap offset-[x] [e]nd
+⍝ section [h]eader: [n]ame [t]ype [f]lags [m]ap offset-[x] si[z]e [a]lign [e]ntsize [l]ink [i]nfo symbol-[b]ase [o]utput-offset [v]addr
+ELF←{expected vbase hbase←⍺ ⋄ fb views←⍵ ⋄ (vm vx ve)←views ⋄ vz←ve-vx
+    head←↑{64↑(⊃fb[vm[⍵]])[vx[⍵]+⍳64⌊vz[⍵]]}¨⍳≢vm
+    bad←~head[;⍳7]∧.=7↑ELF∆IDENT∆EXP ⋄ bad∨←~head[;7]∊0 3 ⋄ bad∨←0≠head[;8]
+    ∨/bad:'Unexpected ELF file identification'⎕SIGNAL 200
 
-        parsed←{SCRIPT ⎕UCS 256|⍵}¨(0⍴⊂⍬),script/mapped
-        members←(0⍴⊂'.'),⊃,/(0⊃¨parsed),⊂⍬ ⋄ asneeded←⊃,/(1⊃¨parsed),⊂⍬ ⋄ count←{≢⊃⍵}¨parsed
+    words←(≢vm)16⍴323⎕DR,head ⋄ meta←U32 words[;4]
+    etype←65536|meta
+    expected∨.≠etype:'One of the input files is not an object file'⎕SIGNAL 200
+    62∨.≠⌊meta÷65536:'One of the input files is not for AMD64'⎕SIGNAL 200
 
-        dirs←count/{⊃1⎕NPARTS ⍵}¨script/paths
-        candidate←dirs,¨members
-        check←(0<≢¨members)∧('-'≠⊃¨members)∧'/'≠⊃¨members
-        local←(⎕NEXISTS¨check/candidate)@{check}⊢members≢⍛⍴0
-        members←(local/candidate)@{local}⊢members
+    eshoff←words U64 10
+    eshnum←65536|U32 words[;15] ⋄ eshstrndx←⌊(U32 words[;15])÷65536
+    64∨.≠⌊(U32 words[;14])÷65536:'Unexpected section-header entry size'⎕SIGNAL 200
+    ∨/(eshoff>vz)∨(64×eshnum)>vz-eshoff:'Section headers outside input view'⎕SIGNAL 200
 
-        search←('-'≠⊃¨members)∧~⎕NEXISTS¨members
-        members←{
-            found←{
-                candidates←o.path,¨⊂'/',⍵
-                exists←⎕NEXISTS¨candidates
-                ~∨/exists:('Cannot find linker-script input ',⍵)⎕SIGNAL 200
-                (exists⍳1)⊃candidates
-            }¨search/⍵
-            found@{search}⊢⍵
-        }⍣(∨/search)⊢members
+    words←(+/eshnum)16⍴323⎕DR∊(vx+eshoff+⍳¨64×eshnum)(⊂⍛⌷)¨fb[vm]
+    (hn ht hl hi)←{U32 words[;⍵]}¨0 1 10 11
+    (hf hx hz ha he)←words∘U64¨2 6 8 12 14
+    first←(+\-⊢)eshnum ⋄ fh←hbase+first ⋄ own←eshnum/⍳≢eshnum
+    ∨/eshstrndx≥eshnum:'Invalid section-name string table index'⎕SIGNAL 200
+    shstr←first+eshstrndx
+    ∨/hn≥hz[shstr[own]]:'Section name outside string table'⎕SIGNAL 200
 
-        kept←binary∘/¨paths mapped(etype×elf)thin specopt
-        ((done maps kind thins doneopt),¨kept),members((count/script/specopt)∨asneeded)
-    }⍣{0=≢5⊃⍺}⊢⍬ ⍬ ⍬ ⍬ ⍬ spec(spec≢⍛⍴0)
+    rows←⍸(ht=1)∧(2|⌊hf÷SHF∆ALLOC)∧2|⌊hf÷SHF∆EXEC
+    obj←own[rows] ⋄ map←vm[obj] ⋄ at←vx[obj]+hx[shstr[obj]]+hn[rows]
+    name←(≢rows)6⍴0 ⋄ full←6≤hz[shstr[obj]]-hn[rows]
+    _←{r←⍸full∧map=⍵ ⋄ index←,at[r]∘.+⍳6
+        name[r;]←(≢r)6⍴(⊃fb[⍵])[index] ⋄ ⍬}¨∪full/map
+    ht←SHT∆FINI@(rows/⍨name∧.=(83⎕DR'.fini'),0)⊢SHT∆INIT@(rows/⍨name∧.=(83⎕DR'.init'),0)⊢ht
 
-    ⍝ Classify inputs
-    vm←⍳≢fb ⋄ vx←fb≢⍛⍴0 ⋄ vz←≢¨fb
-    rel←kind=1 ⋄ dyn←kind=3 ⋄ ar←kind=0
-    direct←(rel/vm)(rel/vx)(rel/vz)
-    shared←(dyn/vm)(dyn/vx)(dyn/vz)
-    archives←(ar/vm)(ar/vx)(ar/vz)(ar/thin)
+    hm←vbase+own ⋄ hb←ht≢⍛⍴¯1
+    (fb views fh eshnum)(hn ht hf hm hx hz ha he hl hi hb)}
 
-    ⍝ Decode a batch of ELF views
-    ELF←{expected←⍺ ⋄ fb views←⍵ ⋄ (vm vx vz)←views
-        head←↑{64↑(⊃fb[vm[⍵]])[vx[⍵]+⍳64⌊vz[⍵]]}¨⍳≢vm
-        bad←~head[;⍳7]∧.=7↑ELF∆IDENT∆EXP
-        bad∨←~head[;7]∊0 3 ⋄ bad∨←0≠head[;8]
-        ∨/bad:'Unexpected ELF file identification'⎕SIGNAL 200
+⍝ Decode object symbol tables and retain raw name slices.
+⍝ [s]ymbol: [n]ame [b]inding [t]ype visibilit[y] [s]ection [v]alue si[z]e
+SYMBOLS←{sbase hbase←⍺ ⋄ files h←⍵
+    (hn ht hf hm hx hz ha he hl hi hb)←h ⋄ (fb fv fh fn)←files ⋄ (vm vx ve)←fv
+    symsh←⍸ht=2 ⋄ symobj←hm[symsh] ⋄ symz←hz[symsh]
+    count←symz÷24
+    ∨/24≠he[symsh]:'Unexpected symbol entry size'⎕SIGNAL 200
+    ∨/0≠24|symz:'Invalid symbol table size'⎕SIGNAL 200
 
-        words←(≢vm)16⍴323⎕DR,head ⋄ meta←U32 words[;4]
-        etype←65536|meta ⋄ emachine←⌊meta÷65536
-        expected∨.≠etype:'One of the input files is not an object file'⎕SIGNAL 200
-        62∨.≠emachine:'One of the input files is not for AMD64'⎕SIGNAL 200
+    words←(+/count)6⍴323⎕DR∊(vx[symobj]+hx[symsh]+⍳¨symz)(⊂⍛⌷)¨fb[vm[symobj]]
+    (info other shndx)←(256 256 65536){⍺|⌊words[;1]÷⍵}¨1 256 65536
+    sb←1@(10∘=)⊢⌊info÷16 ⋄ st←16|info ⋄ sn←U32 words[;0]
+    (sv sz)←words∘U64¨2 4 ⋄ sy←4|other
 
-        eshoff←words U64 10 ⋄ eshentsize←⌊(U32 words[;14])÷65536
-        eshnum←65536|U32 words[;15] ⋄ eshstrndx←⌊(U32 words[;15])÷65536
-        64∨.≠eshentsize:'Unexpected section-header entry size'⎕SIGNAL 200
-        ∨/(eshoff>vz)∨(64×eshnum)>vz-eshoff:'Section headers outside input view'⎕SIGNAL 200
+    reg←(0<shndx)∧shndx<65280
+    abs←shndx=65521 ⋄ com←shndx=65522 ⋄ xnd←shndx=65535
+    ∨/xnd:'Extended symbol section indices are not supported yet'⎕SIGNAL 200
+    ∨/(shndx≥65280)∧~(abs∨com∨xnd):'Unsupported reserved symbol section index'⎕SIGNAL 200
 
-        words←(+/eshnum)16⍴323⎕DR∊(vx+eshoff+⍳¨64×eshnum)(⊂⍛⌷)¨fb[vm]
-        (hn ht hl hi)←{U32 words[;⍵]}¨0 1 10 11
-        (hf hx hz ha he)←words∘U64¨2 6 8 12 14
-        fh0←¯1↓+\0,eshnum ⋄ hm←eshnum/⍳≢eshnum
-        ∨/eshstrndx≥eshnum:'Invalid section-name string table index'⎕SIGNAL 200
-        shstr←fh0+eshstrndx
-        ∨/hn≥hz[shstr[hm]]:'Section name outside string table'⎕SIGNAL 200
+    start←(+\-⊢)count ⋄ own←count/⍳≢count ⋄ obj←symobj[own]
+    ⍝ Symbol-table section → first row in the global symbol arena.
+    localbase←start@symsh⊢ht≢⍛⍴¯1 ⋄ hb←(sbase+start)@symsh⊢hb
 
-        rows←⍸(ht=1)∧(2|⌊hf÷2)∧2|⌊hf÷4
-        obj←hm[rows] ⋄ map←vm[obj] ⋄ at←vx[obj]+hx[shstr[obj]]+hn[rows]
-        name←(≢rows)6⍴0 ⋄ left←hz[shstr[obj]]-hn[rows] ⋄ full←6≤left
-        _←{r←⍸full∧map=⍵ ⋄ index←,at[r]∘.+⍳6
-            name[r;]←(≢r)6⍴(⊃fb[⍵])[index] ⋄ ⍬}¨∪full/map
-        ht←257@(rows/⍨name∧.=(83⎕DR'.fini'),0)⊢256@(rows/⍨name∧.=(83⎕DR'.init'),0)⊢ht
+    ss←sn≢⍛⍴¯1 ⋄ ss[⍸abs]←¯2 ⋄ ss[⍸com]←¯3
+    ss[rows]←fh[obj[rows]]+shndx[rows←⍸reg]
+    strsh←fh[symobj]+hl[symsh]
+    ∨/hm[strsh-hbase]≠symobj:'Symbol table links outside its object'⎕SIGNAL 200
+    strx←hx[strsh-hbase] ⋄ strz←hz[strsh-hbase] ⋄ strstart←(+\-⊢)strz
+    sn∨.≥strz[own]:'Symbol name outside string table'⎕SIGNAL 200
+    named←sb≠0 ⋄ gsh←⍸ht=17
+    named[localbase[fh[hm[gsh]]+hl[gsh]-hbase]+hi[gsh]]←1
+    pool←∊(vx[symobj]+strx+⍳¨strz)(⊂⍛⌷)¨fb[vm[symobj]]
+    0∨.≠pool[strstart+strz-1]:'Invalid symbol string table'⎕SIGNAL 200
+    at←strstart[own]+sn ⋄ zero←⍸pool=0 ⋄ namelen←sn≢⍛⍴0
+    rows←⍸named ⋄ namelen[rows]←zero[(zero⍸at[rows])+0≠pool[at[rows]]]-at[rows]
 
-        files←fb views fh0 eshnum
-        h←hn ht hf hm hx hz ha he hl hi
-        files h}
-    (files h)←1 ELF fb direct
-    (sharedfiles sharedh)←{
-        0=≢⊃shared:(fb shared ⍬ ⍬)(10⍴⊂⍬)
-        3 ELF fb shared
+    (hn ht hf hm hx hz ha he hl hi hb)((sn≢⍛⍴0)sb st sy ss sv sz)(pool at namelen)}
+
+⍝ Decode visible definitions and SONAMEs exported by shared objects.
+⍝ [d]ynamic symbol: [m]ap [n]ame [b]inding [t]ype visibilit[y] [v]alue si[z]e
+DSYMBOLS←{files h←⍵
+    (hn ht hf hm hx hz ha he hl hi hb)←h ⋄ (fb fv fh fn)←files ⋄ (vm vx ve)←fv
+    0=≢vm:(7⍴⊂⍬)⍬
+
+    symsh←⍸ht=11
+    vm≠⍥≢symsh:'Expected one dynamic symbol table per shared object'⎕SIGNAL 200
+    symobj←hm[symsh] ⋄ symz←hz[symsh]
+    (⍳≢vm)≢symobj:'Dynamic symbol tables are not one per shared object'⎕SIGNAL 200
+    24∨.≠he[symsh]:'Unexpected dynamic symbol entry size'⎕SIGNAL 200
+    0∨.≠24|symz:'Invalid dynamic symbol table size'⎕SIGNAL 200
+
+    words←(+/count←symz÷24)6⍴323⎕DR∊(vx[symobj]+hx[symsh]+⍳¨symz)(⊂⍛⌷)¨fb[vm[symobj]]
+    sn←U32 words[;0] ⋄ info←256|words[;1] ⋄ other←256|⌊words[;1]÷256
+    sb←⌊info÷16 ⋄ st←16|info ⋄ sy←4|other ⋄ shndx←65536|⌊words[;1]÷65536
+    (sv sz)←words∘U64¨2 4
+
+    own←count/⍳≢count ⋄ obj←symobj[own]
+    keep←(sb∊1 2 10)∧(shndx≠0)∧sy∊0 3
+
+    strsh←fh[symobj]+hl[symsh]
+    hm[strsh]∨.≠symobj:'Dynamic symbol table links outside its shared object'⎕SIGNAL 200
+    strz←hz[strsh] ⋄ strstart←(+\-⊢)strz
+    strpool←∊(vx[symobj]+hx[strsh]+⍳¨strz)(⊂⍛⌷)¨fb[vm[symobj]]
+
+    nameat←strstart[own]+sn
+    sn∨.≥strz[own]:'Dynamic symbol name outside string table'⎕SIGNAL 200
+    0∨.≠strpool[strstart+strz-1]:'Invalid dynamic string table'⎕SIGNAL 200
+    zeros←⍸strpool=0
+    namelen←zeros[(zeros⍸nameat)+0≠strpool[nameat]]-nameat
+    name←{strpool[nameat[⍵]+⍳namelen[⍵]]}¨⍸keep
+
+    dynsh←⍸ht=6
+    vm≠⍥≢dynsh:'Expected one dynamic section per shared object'⎕SIGNAL 200
+    dynobj←hm[dynsh] ⋄ dynz←hz[dynsh]
+    (⍳≢vm)≢dynobj:'Dynamic sections are not one per shared object'⎕SIGNAL 200
+    16∨.≠he[dynsh]:'Unexpected dynamic entry size'⎕SIGNAL 200
+    0∨.≠16|dynz:'Invalid dynamic section size'⎕SIGNAL 200
+
+    dwords←(+/dcount←dynz÷16)4⍴323⎕DR∊(vx[dynobj]+hx[dynsh]+⍳¨dynz)(⊂⍛⌷)¨fb[vm[dynobj]]
+    tag←dwords U64 0 ⋄ value←dwords U64 2 ⋄ down←dcount/⍳≢dcount
+    (fh[dynobj]+hl[dynsh])∨.≠strsh:'Dynamic and dynamic symbol tables use different string tables'⎕SIGNAL 200
+
+    NAMES←{owner←⍺ ⋄ offset←⍵ ⋄ 0=≢owner:⍬
+        offset∨.≥strz[owner]:'Dynamic string offset outside string table'⎕SIGNAL 200
+        at←strstart[owner]+offset ⋄ len←zeros[(zeros⍸at)+0≠strpool[at]]-at
+        {strpool[at[⍵]+⍳len[⍵]]}¨⍳≢at}
+
+    sr←⍸tag=14
+    vm≠⍥≢sr:'Expected one SONAME per shared object'⎕SIGNAL 200
+    sowner←dynobj[down[sr]]
+    (⍳≢vm)≢sowner:'SONAME entries are not one per shared object'⎕SIGNAL 200
+    soname←sowner NAMES value[sr]
+
+    ((obj[keep])name(sb/⍨keep)(st/⍨keep)(sy/⍨keep)(sv/⍨keep)(sz/⍨keep))soname}
+
+⍝ Decode the initial object and shared object views.
+DECODE←{fb direct shared←⍵
+    files h←1 0 0 ELF fb direct
+    sharedfiles sharedh←{
+        0=≢⊃shared:(fb shared ⍬ ⍬)(11⍴⊂⍬)
+        3 0 0 ELF fb shared
     }⍬
+    ds soname←DSYMBOLS sharedfiles sharedh
+    files h ds soname}
 
-    ⍝ Decode visible definitions exported by shared objects
-    (ds soname needed)←{(hn ht hf hm hx hz ha he hl hi)←sharedh ⋄ (fb view fh0 fhn)←sharedfiles ⋄ (vm vx vz)←view
-        0=≢vm:(7⍴⊂⍬)⍬(⍬ ⍬)
+⍝ Decode padded decimal field from an archive member header.
+AR∆DEC←{d←⍵~32
+    ∨/~d∊48+⍳10:('Invalid ',⍺)⎕SIGNAL 200
+    10⊥d-48}
 
-        symsh←⍸ht=11
-        (≢vm)≠≢symsh:'Expected one dynamic symbol table per shared object'⎕SIGNAL 200
-        symobj←hm[symsh] ⋄ symz←hz[symsh]
-        (⍳≢vm)≢symobj:'Dynamic symbol tables are not one per shared object'⎕SIGNAL 200
-        24∨.≠he[symsh]:'Unexpected dynamic symbol entry size'⎕SIGNAL 200
-        0∨.≠24|symz:'Invalid dynamic symbol table size'⎕SIGNAL 200
+⍝ Decode GNU archive symbol indexes.
+⍝ [a]rchive view: [m]ap offset-[x] si[z]e [t]hin
+AR∆INDEX←{archives files←⍵ ⋄ (am ax az at)←archives ⋄ (fb _ _ _)←files
+    keep←az≠8
+    (am ax az at)←keep∘/¨am ax az at
+    ar←⎕NS⍬ ⋄ ar.names←⎕NS⍬
+    ar.names.(length rows bytes id)←⊂⍬ ⋄ ar.names.count←0
+    ar.(map off thin longx longz member symbol first)←⊂⍬
+    ar.nmember←0
+    0=≢am:ar
+    ∨/az<68:'Archive is too small for its symbol index'⎕SIGNAL 200
 
-        words←(+/count←symz÷24)6⍴323⎕DR∊(vx[symobj]+hx[symsh]+⍳¨symz)(⊂⍛⌷)¨fb[vm[symobj]]
+    mh←↑{(⊃fb[am[⍵]])[ax[⍵]+8+⍳60]}¨⍳≢am
+    47∨.≠mh[;0]:'Archive has no symbol index'⎕SIGNAL 200
+    ∨/~mh[;1]∊32 47:'Invalid archive symbol index member'⎕SIGNAL 200
+    ∨/~mh[;58 59]∧.=96 10:'Invalid archive member header'⎕SIGNAL 200
 
-        sn←U32 words[;0]
-        info←256|words[;1] ⋄ other←256|⌊words[;1]÷256
-        sb←⌊info÷16 ⋄ st←16|info ⋄ so←4|other
-        shndx←65536|⌊words[;1]÷65536
-        (sv sz)←words∘U64¨2 4
+    size←'archive member size'∘AR∆DEC¨↓mh[;48+⍳10]
+    data←ax+68
+    ∨/size>az-68:'Archive symbol index outside archive view'⎕SIGNAL 200
 
-        own←count/⍳≢count ⋄ obj←symobj[own] ⋄ keep←(sb∊1 2 10)∧shndx≠0∧so∊0 3
+    next←data+2 ALIGN size ⋄ limit←ax+az
+    lh←↑{60↑(⊃fb[am[⍵]])[next[⍵]+⍳0⌈60⌊limit[⍵]-next[⍵]]}¨⍳≢am
+    long←lh[;0 1]∧.=47 47
+    z←'archive long name table size'∘AR∆DEC¨↓long⌿lh[;48+⍳10]
+    longz←z@{long}⊢am≢⍛⍴0
+    longx←next+60
+    ∨/long∧(longz>limit-longx):'Archive long name table outside archive'⎕SIGNAL 200
+    longx←¯1@{~long}⊢longx
 
-        strsh←fh0[symobj]+hl[symsh]
-        hm[strsh]∨.≠symobj:'Dynamic symbol table links outside its shared object'⎕SIGNAL 200
-        strz←hz[strsh] ⋄ strstart←¯1↓+\0,strz
-        strpool←∊(vx[symobj]+hx[strsh]+⍳¨strz)(⊂⍛⌷)¨fb[vm[symobj]]
+    ⍝ The GNU/SysV index begins with big-endian u32 count.
+    count←{256⊥256|(⊃fb[am[⍵]])[data[⍵]+⍳4]}¨⍳≢am
+    ∨/size<4+4×count:'Invalid archive symbol index'⎕SIGNAL 200
 
-        nameat←strstart[own]+sn
-        sn∨.≥strz[own]:'Dynamic symbol name outside string table'⎕SIGNAL 200
-        0∨.≠strpool[strstart+strz-1]:'Invalid dynamic string table'⎕SIGNAL 200
-        zeros←⍸strpool=0
-        namelen←zeros[(zeros⍸nameat)+0≠strpool[nameat]]-nameat
-        name←{0=≢⍵:⍬ ⋄ {strpool[nameat[⍵]+⍳namelen[⍵]]}¨⍵}⍸keep
+    member←U32 323⎕DR,⌽(+/count)4⍴∊{(⊃fb[am[⍵]])[data[⍵]+4+⍳4×count[⍵]]}¨⍳≢am
+    owner←count/⍳≢am ⋄ namez←size-(4+4×count)
+    pools←{(⊃fb[am[⍵]])[(data[⍵]+4+4×count[⍵])+⍳namez[⍵]]}¨⍳≢am ⋄ pool←∊pools ⋄ poolstart←(+\-⊢)namez
+    zeros←∊{z←⍸0=⊃pools[⍵]
+        count[⍵]>≢z:'Archive symbol index count does not match its names'⎕SIGNAL 200
+        poolstart[⍵]+count[⍵]↑z
+    }¨⍳≢am
+    head←≠owner ⋄ start←1+¯1,¯1↓zeros ⋄ start[⍸head]←poolstart[head/owner] ⋄ len←zeros-start
+    ∨/member≠⍥≢start:'Archive symbol index count does not match its names'⎕SIGNAL 200
 
-        ⍝ Shared object, name, binding, type, visibility, value, size
-        exports←(obj[keep])name(sb/⍨keep)(st/⍨keep)(so/⍨keep)(sv/⍨keep)(sz/⍨keep)
+    ⍝ Bucket names by length for major cell lookup without enclosed vectors.
+    length←∪len ⋄ rows←{⍸len=⍵}¨length
+    name←{r←⊃rows[⍵] ⋄ index←,start[r]∘.+⍳length[⍵] ⋄ ((≢r),length[⍵])⍴pool[index]}¨⍳≢length
+    origin←{m←⊃name[⍵] ⋄ m⍳m}¨⍳≢length
+    uniq←{(⍳≢⍵)=⍵}¨origin ⋄ unique←+/¨uniq ⋄ number←{¯1++\⍵}¨uniq
+    base←(+\-⊢)unique
+    indexed←len≢⍛⍴0 ⋄ _←{indexed[⊃rows[⍵]]←base[⍵]+(⊃number[⍵])[⊃origin[⍵]] ⋄ ⍬}¨⍳≢length
+    name←{(⊃uniq[⍵])⌿⊃name[⍵]}¨⍳≢length ⋄ id←{base[⍵]+⍳unique[⍵]}¨⍳≢length
+    ar.names.(length rows bytes id count)←length rows name id(+/unique)
+    off←ax[owner]+member ⋄ key←off+(1+⌈/¯1,off)×am[owner]
+    members←∪key ⋄ recordmember←members⍳key
+    lead←≠indexed ⋄ firstrow←(+/unique)⍴≢indexed ⋄ firstrow[lead/indexed]←lead/⍳≢indexed
+    ar.(map off thin longx longz member symbol first)←am[owner]off(at[owner])(longx[owner])(longz[owner])recordmember indexed firstrow
+    ar.nmember←≢members ⋄ ar}
 
-        ⍝ Decode dynamic entries
-        dynsh←⍸ht=6
-        (≢vm)≠≢dynsh:'Expected one dynamic section per shared object'⎕SIGNAL 200
-        dynobj←hm[dynsh] ⋄ dynz←hz[dynsh]
-        (⍳≢vm)≢dynobj:'Dynamic sections are not one per shared object'⎕SIGNAL 200
-        16∨.≠he[dynsh]:'Unexpected dynamic entry size'⎕SIGNAL 200
-        0∨.≠16|dynz:'Invalid dynamic section size'⎕SIGNAL 200
+⍝ Map object symbol name slices into the archive index name.
+SLICEIDS←{ar files slices←⍵ ⋄ (pool at len)←slices
+    length rows name id←ar.names.(length rows bytes id)
+    0=≢length:len≢⍛⍴¯1
+    result←len≢⍛⍴¯1
+    order←⍸len>0 ⋄ order←order[⍋len[order]] ⋄ sorted←len[order] ⋄ present←∪sorted ⋄ bylength←sorted{⊂⍵}⌸order
+    _←{i←⍵ ⋄ r←⊃bylength[present⍳length[i]]
+        matrix←((≢r),length[i])⍴pool[,at[r]∘.+⍳length[i]]
+        hit←(⊃name[i])⍳matrix ⋄ found←hit<≢⊃id[i]
+        result[found/r]←(⊃id[i])[found/hit] ⋄ ⍬}¨⍸length∊present
+    result}
 
-        dwords←(+/dcount←dynz÷16)4⍴323⎕DR∊(vx[dynobj]+hx[dynsh]+⍳¨dynz)(⊂⍛⌷)¨fb[vm[dynobj]]
-        tag←dwords U64 0 ⋄ value←dwords U64 2 ⋄ down←dcount/⍳≢dcount
+⍝ Decode selected archive members into ELF views, mapping thin members as needed.
+AR∆DEC∆MEMBERS←{ar paths files rows←⍵ ⋄ (fb _ _ _)←files
+    am ax at alx alz←ar.(map off thin longx longz)
+    thin←at[rows] ⋄ lx←alx[rows] ⋄ lz←alz[rows]
+    map←am[rows] ⋄ off←ax[rows] ⋄ limit←≢¨fb[map]
+    ∨/(off>limit)∨(60>limit-off):'Archive member header outside archive'⎕SIGNAL 200
 
-        dstrsh←fh0[dynobj]+hl[dynsh]
-        dstrsh∨.≠strsh:'Dynamic and dynamic-symbol tables use different string tables'⎕SIGNAL 200
+    mh←(≢rows)60⍴0
+    _←{r←⍸map=⍵ ⋄ index←,off[r]∘.+⍳60
+        mh[r;]←(≢r)60⍴(⊃fb[⍵])[index] ⋄ ⍬}¨∪map
+    ∨/~mh[;58 59]∧.=96 10:'Invalid archive member header'⎕SIGNAL 200
 
-        NAMES←{owner←⍺ ⋄ offset←⍵ ⋄ 0=≢owner:⍬
-            offset∨.≥strz[owner]:'Dynamic string offset outside string table'⎕SIGNAL 200
-            at←strstart[owner]+offset ⋄ len←zeros[(zeros⍸at)+0≠strpool[at]]-at
-            {strpool[at[⍵]+⍳len[⍵]]}¨⍳≢at}
+    size←'archive member size'∘AR∆DEC¨↓mh[;48+⍳10]
+    data←off+60
+    ∨/(~thin)∧(size>limit-data):'Archive member data outside archive'⎕SIGNAL 200
 
-        sr←⍸tag=14
-        (≢vm)≠≢sr:'Expected one SONAME per shared object'⎕SIGNAL 200
-        sowner←dynobj[down[sr]]
-        (⍳≢vm)≢sowner:'SONAME entries are not one per shared object'⎕SIGNAL 200
-        soname←sowner NAMES value[sr]
+    tr←⍸thin
+    memberpaths←{i←⍵ ⋄ field←mh[i;⍳16] ⋄ field←field/⍨field≠32
+        0=≢field:'Empty thin archive member name'⎕SIGNAL 200
 
-        nr←⍸tag=1
-        nowner←dynobj[down[nr]]
-        needed←nowner(nowner NAMES value[nr])
+        bytes←{
+            47≠⊃field:{
+                47≠⊃¯1↑field:'Invalid thin archive member name'⎕SIGNAL 200
+                ¯1↓field}⍬
 
-        exports soname needed
-    }⍬
+            digits←1↓field
+            (0=≢digits)∨∨/~digits∊48+⍳10:'Invalid thin archive long-name reference'⎕SIGNAL 200
+            ¯1=lx[i]:'Thin archive has no long name table'⎕SIGNAL 200
 
-    ⍝ Decode GNU archive symbol indexes
-    archiveindex←{(am ax az at)←archives ⋄ (fb view fh0 fhn)←files
-        keep←az≠8
-        (am ax az at)←keep∘/¨am ax az at
-        0=≢am:⍬ ⍬(⍬ ⍬ ⍬ ⍬ 0 0)⍬ ⍬ ⍬ ⍬ 0 ⍬ ⍬
-        ∨/az<68:'Archive is too small for its symbol index'⎕SIGNAL 200
+            x←10⊥digits-48
+            x≥lz[i]:'Thin archive long-name reference outside table'⎕SIGNAL 200
+            pool←(⊃fb[map[i]])[lx[i]+x+⍳lz[i]-x]
+            end←pool⍳10
+            end=≢pool:'Unterminated thin archive member name'⎕SIGNAL 200
 
-        mh←↑{(⊃fb[am[⍵]])[ax[⍵]+8+⍳60]}¨⍳≢am
-        47∨.≠mh[;0]:'Archive has no symbol index'⎕SIGNAL 200
-        ∨/~mh[;1]∊32 47:'Invalid archive symbol-index member'⎕SIGNAL 200
-        ∨/~mh[;58 59]∧.=96 10:'Invalid archive member header'⎕SIGNAL 200
+            name←end↑pool
+            (0=≢name)∨47≠⊃¯1↑name:'Invalid thin archive long name'⎕SIGNAL 200
+            ¯1↓name}⍬
 
-        ⍝ Decimal member size occupies bytes 48-57
-        digit←mh[;48+⍳10]
-        size←{d←⍵/⍨⍵≠32
-            ∨/~d∊48+⍳10:'Invalid archive member size'⎕SIGNAL 200
-            10⊥d-48
-        }¨↓digit
-        data←ax+68
-        ∨/size>az-68:'Archive symbol index outside archive view'⎕SIGNAL 200
+        path←⎕UCS bytes
+        47=⊃bytes:path
+        (⊃1⎕NPARTS paths[map[i]]),path
+    }¨tr
 
-        next←data+2 ALIGN size ⋄ limit←ax+az
-        lh←↑{60↑(⊃fb[am[⍵]])[next[⍵]+⍳0⌈60⌊limit[⍵]-next[⍵]]}¨⍳≢am
-        long←lh[;0 1]∧.=47 47
-        z←{d←⍵/⍨⍵≠32
-            ∨/~d∊48+⍳10:'Invalid archive long-name table size'⎕SIGNAL 200
-            10⊥d-48
-        }¨↓long⌿lh[;48+⍳10]
-        longz←z@(⍸long)⊢(≢am)⍴0
-        longx←next+60
-        ∨/long∧longz>limit-longx:'Archive long-name table outside archive'⎕SIGNAL 200
-        longx←¯1@{~long}⊢longx
+    newfb←{0=≢⍵:⍬ ⋄ {83 ¯1⎕MAP⍵'R'}¨⍵}memberpaths
+    map[tr]←(≢fb)+⍳≢newfb ⋄ data[tr]←0 ⋄ size[tr]←≢¨newfb
+    (map data(data+size))newfb
+}
 
-        ⍝ The GNU/SysV index begins with big-endian u32 count.
-        count←{256⊥256|(⊃fb[am[⍵]])[data[⍵]+⍳4]}¨⍳≢am
-        ∨/size<4+4×count:'Invalid archive symbol index'⎕SIGNAL 200
+⍝ Select the archive members required by unresolved symbol name IDs.
+AR∆SELECT←{ar paths files need picked←⍵
+    recordmember indexed firstrow←ar.(member symbol first)
+    am←ar.map
+    0=≢am:(⍬ ⍬ ⍬)⍬ picked
 
-        member←U32 323⎕DR,⌽(+/count)4⍴∊{(⊃fb[am[⍵]])[data[⍵]+4+⍳4×count[⍵]]}¨⍳≢am
-        owner←count/⍳≢am ⋄ namex←data+4+4×count ⋄ namez←size-(4+4×count)
-        pools←{(⊃fb[am[⍵]])[namex[⍵]+⍳namez[⍵]]}¨⍳≢am ⋄ pool←∊pools ⋄ poolstart←¯1↓+\0,namez
-        zeros←∊{z←⍸0=⊃pools[⍵]
-            count[⍵]>≢z:'Archive symbol-index count does not match its names'⎕SIGNAL 200
-            poolstart[⍵]+count[⍵]↑z
-        }¨⍳≢am
-        first←≠owner ⋄ start←1+¯1,¯1↓zeros ⋄ start[⍸first]←poolstart[first/owner] ⋄ len←zeros-start
-        ∨/(≢member)≠≢start:'Archive symbol-index count does not match its names'⎕SIGNAL 200
+    ⍝ Preserve unresolved symbol order while using dense archive name IDs.
+    rows←firstrow[need] ⋄ rows←rows/⍨rows<≢indexed
+    rows←rows/⍨~picked[recordmember[rows]]
+    0=≢rows:(⍬ ⍬ ⍬)⍬ picked
 
-        ⍝ Bucket raw names by length for major-cell lookup without enclosed vectors.
-        length←∪len ⋄ rows←{⍸len=⍵}¨length
-        name←{r←⊃rows[⍵] ⋄ index←,start[r]∘.+⍳length[⍵] ⋄ ((≢r),length[⍵])⍴pool[index]}¨⍳≢length
-        origin←{m←⊃name[⍵] ⋄ m⍳m}¨⍳≢length
-        first←{(⍳≢⍵)=⍵}¨origin ⋄ unique←+/¨first ⋄ number←{¯1++\⍵}¨first
-        base←¯1↓+\0,unique
-        indexed←(≢len)⍴0 ⋄ _←{indexed[⊃rows[⍵]]←base[⍵]+(⊃number[⍵])[⊃origin[⍵]] ⋄ ⍬}¨⍳≢length
-        name←{(⊃first[⍵])⌿⊃name[⍵]}¨⍳≢length ⋄ id←{base[⍵]+⍳unique[⍵]}¨⍳≢length
-        names←length rows name id(≢len)(+/unique)
-        off←ax[owner]+member ⋄ step←1+⌈/¯1,off ⋄ key←off+step×am[owner]
-        members←∪key ⋄ recordmember←members⍳key
-        first←≠indexed ⋄ firstrow←(+/unique)⍴≢indexed ⋄ firstrow[first/indexed]←first/⍳≢indexed
-        ⍝ archive mapping, member-header offset, symbol name, thin, long-name offset and size
-        am[owner]off names(at[owner])(longx[owner])(longz[owner])recordmember(≢members)indexed firstrow
-    }⍬
+    ⍝ Several symbols can select the same archive member
+    rows←(≠indexed[rows])/rows
+    member←recordmember[rows] ⋄ distinct←≠member ⋄ rows←distinct/rows ⋄ member←distinct/member
+    unseen←~picked[member] ⋄ rows←unseen/rows ⋄ member←unseen/member
+    0=≢rows:(⍬ ⍬ ⍬)⍬ picked
+    picked[member]←1
 
-    SLICEIDS←{files slices←⍵ ⋄ (pool at len)←slices
-        (length rows name id total nids)←2⊃archiveindex
-        0=≢length:(≢len)⍴¯1
-        result←(≢len)⍴¯1
-        order←⍸len>0 ⋄ order←order[⍋len[order]] ⋄ sorted←len[order] ⋄ present←∪sorted ⋄ bylength←sorted{⊂⍵}⌸order
-        _←{i←⍵ ⋄ r←⊃bylength[present⍳length[i]]
-            matrix←((≢r),length[i])⍴pool[,at[r]∘.+⍳length[i]]
-            hit←(⊃name[i])⍳matrix ⋄ found←hit<≢⊃id[i]
-            result[found/r]←(⊃id[i])[found/hit] ⋄ ⍬}¨⍸length∊present
-        result}
+    views newfb←AR∆DEC∆MEMBERS ar paths files rows
+    views newfb picked
+}
 
-    ⍝ Decode ELF objects tables
-    SYMBOLS←{files h←⍵
-        ⍝ Decode symbols
-        (s symbase slices)←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
-            symsh←⍸ht=2 ⋄ symobj←hm[symsh] ⋄ symx←hx[symsh] ⋄ symz←hz[symsh]
-            count←symz÷24
-            ∨/24≠he[symsh]:'Unexpected symbol entry size'⎕SIGNAL 200
-            ∨/0≠24|symz:'Invalid symbol table size'⎕SIGNAL 200
+⍝ Select archive members reachable from unresolved strong symbols.
+AR∆MEMBERS←{ar paths files h←⍵
+    (h s slices)←0 0 SYMBOLS files h
 
-            words←(+/count)6⍴323⎕DR∊(vx[symobj]+symx+⍳¨symz)(⊂⍛⌷)¨fb[vm[symobj]]
+    a←⎕NS⍬ ⋄ a.files←files
+    (sn sb st so ss sv sz)←s ⋄ strong←sb=1
+    ⍝ sid: object symbol row → archive-name ID, or ¯1.
+    sid←SLICEIDS ar files slices ⋄ a.defined←ar.names.count⍴0
+    ids←(strong∧(ss≠¯1))/sid ⋄ a.defined[(0≤ids)/ids]←1
+    a.need←∪(strong∧(ss=¯1)∧(sid≥0))/sid ⋄ a.need←a.need/⍨~a.defined[a.need]
+    a.(hpart spart slicepart idpart)←(,⊂h)(,⊂s)(,⊂slices)(,⊂sid)
+    a.hbase←≢⊃h ⋄ a.views←⍬ ⍬ ⍬ ⋄ a.picked←ar.nmember⍴0
 
-            (info other shndx)←(256 256 65536){⍺|⌊words[;1]÷⍵}¨1 256 65536
-            sb←⌊info÷16 ⋄ st←16|info ⋄ sn←U32 words[;0]
-            (sv sz)←words∘U64¨2 4 ⋄ so←4|other
+    a←{a←⍵
+        ⍝ Select all members named by the frontier. None means fixed point.
+        (a.views newfb a.picked)←AR∆SELECT ar paths a.files a.need a.picked
+        0=≢⊃a.views:a
 
-            reg←(0<shndx)∧shndx<65280
-            abs←shndx=65521 ⋄ com←shndx=65522 ⋄ xnd←shndx=65535
-            ∨/xnd:'Extended symbol section indices are not supported yet'⎕SIGNAL 200
-            ∨/(shndx≥65280)∧~abs∨com∨xnd:'Unsupported reserved symbol section index'⎕SIGNAL 200
+        ⍝ Map and decode the newly selected members as one object batch.
+        (ofb ov ofh ofn)←a.files ⋄ fb←ofb,newfb
+        (ovm ovx ove)←ov ⋄ vbase←≢ovm
+        (nfiles nh)←1 vbase a.hbase ELF fb a.views
+        (nfb nv nfh nfn)←nfiles ⋄ (nvm nvx nve)←nv
+        fv←(ovm,nvm)(ovx,nvx)(ove,nve) ⋄ a.files←fb fv(ofh,nfh)(ofn,nfn)
 
-            start←¯1↓+\0,count ⋄ own←count/⍳≢count ⋄ obj←symobj[own]
-            symbase←start@symsh⊢(≢ht)⍴¯1
+        sbase←+/≢¨0⊃¨a.spart
+        (nh ns nn)←sbase a.hbase SYMBOLS a.files nh
+        (nsn nsb nst nsy nss nsv nsz)←ns
+        a.hpart,←⊂nh ⋄ a.spart,←⊂ns ⋄ a.slicepart,←⊂nn
+        a.hbase+←≢⊃nh
 
-            ⍝ Symbols string table
-            ss←(≢sn)⍴¯1 ⋄ ss[⍸abs]←¯2 ⋄ ss[⍸com]←¯3
-            ss[rows]←fh0[obj[rows]]+shndx[rows←⍸reg]
-            strsh←fh0[symobj]+hl[symsh]
-            ∨/hm[strsh]≠symobj:'Symbol table links outside its object'⎕SIGNAL 200
-            strx←hx[strsh] ⋄ strz←hz[strsh] ⋄ strstart←¯1↓+\0,strz
-            sn∨.≥strz[own]:'Symbol name outside string table'⎕SIGNAL 200
-            named←sb≠0 ⋄ gsh←⍸ht=17
-            named[symbase[fh0[hm[gsh]]+hl[gsh]]+hi[gsh]]←1
-            pool←∊(vx[symobj]+strx+⍳¨strz)(⊂⍛⌷)¨fb[vm[symobj]]
-            0∨.≠pool[strstart+strz-1]:'Invalid symbol string table'⎕SIGNAL 200
-            at←strstart[own]+sn ⋄ zero←⍸pool=0 ⋄ namelen←(≢sn)⍴0
-            rows←⍸named ⋄ namelen[rows]←zero[(zero⍸at[rows])+0≠pool[at[rows]]]-at[rows]
-            slices←pool at namelen
-            s←((≢sn)⍴0)sb st so ss sv sz
-            s symbase slices
-        }⍬
+        ⍝ New definitions close names. New undefined symbols extend the frontier.
+        nstrong←nsb=1 ⋄ nid←SLICEIDS ar nfiles nn ⋄ a.idpart,←⊂nid
+        ids←(nstrong∧(nss≠¯1))/nid ⋄ a.defined[(0≤ids)/ids]←1
+        unresolved←(nstrong∧(nss=¯1)∧(nid≥0))/nid ⋄ a.need←∪a.need,unresolved
+        a.need←a.need/⍨~a.defined[a.need]
+        a
+    }⍣{0=≢⊃⍺.views}⊢a
 
-        s symbase slices
-    }
-    (s symbase slices)←SYMBOLS files h
+    h←⊃¨,/¨↓⍉↑a.hpart ⋄ s←⊃¨,/¨↓⍉↑a.spart
+    pools←0⊃¨a.slicepart
+    slices←(∊pools)(∊((+\-⊢)≢¨pools)+¨1⊃¨a.slicepart)(∊2⊃¨a.slicepart)
+    a.files h s slices(∊a.idpart)}
 
-    RELOCATIONS←{files h symbase keep←⍵ ⋄ (hn ht hf hm hx hz ha he hl hi)←h ⋄ (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
-        relash←⍸ht=4 ⋄ target←fh0[hm[relash]]+hi[relash] ⋄ relash←(keep[relash]∧keep[target])/relash
-        relaobj←hm[relash] ⋄ relax←hx[relash] ⋄ relaz←hz[relash]
-        count←relaz÷24
-        ∨/24≠he[relash]:'Unexpected RELA entry size'⎕SIGNAL 200
-        ∨/0≠24|relaz:'Unexpected RELA section size'⎕SIGNAL 200
+⍝ Intern object, DSO, archive and synthetic names.
+⍝ Equal byte strings receive one ID. Names aren't decoded as text.
+INTERN←{ar slices sid s ds←⍵
+    (sn sb st sy ss sv sz)←s ⋄ (dm dn db dt dy dv dz)←ds
+    (pool oat olen)←slices ⋄ x←dn,SPECIAL∆NAME ⋄ xlen←≢¨x
+    alen amat aid anids←ar.names.(length bytes id count)
 
-        map←vm[relaobj] ⋄ src←vx[relaobj]+relax ⋄ dst←¯1↓+\0,relaz ⋄ raw←(+/relaz)⍴0
-        _←{0=≢map:⍬ ⋄ _←{r←⍸map=⍵ ⋄ z←relaz[r] ⋄ at←¯1↓+\0,z ⋄ batch←⌊at÷2*20
-            _←{q←(batch=⍵)/r ⋄ n←relaz[q] ⋄ base←¯1↓+\0,n ⋄ i←⍳+/n
-                raw[i+n/dst[q]-base]←(⊃fb[map[⊃q]])[i+n/src[q]-base] ⋄ ⍬}¨∪batch ⋄ ⍬}¨∪map ⋄ ⍬}⍬
-        words←(+/count)6⍴323⎕DR raw
-        rx←words U64 0 ⋄ (rt rawsym)←{U32 words[;⍵]}¨2 3 ⋄ ra←words S64 4
-        own←count/⍳≢count ⋄ rh←(fh0[relaobj]+hi[relash])[own]
-
-        symsh←fh0[relaobj]+hl[relash] ⋄ base←symbase[symsh]
-        ∨/¯1=base:'RELA does not reference a symbol table'⎕SIGNAL 200
-        rs←base[own]+rawsym
-        rh rx rs rt ra
-    }
-
-    COMDAT←{files h s symbase←⍵
-        (hn ht hf hm hx hz ha he hl hi)←h ⋄(fb view fh0 fhn)←files ⋄ (vm vx vz)←view ⋄ (sn sb st so ss sv sz)←s
-        keep←(≢ht)⍴1
-        gsh←⍸ht=17 ⋄ gobj←hm[gsh] ⋄ goff←hx[gsh] ⋄ glen←hz[gsh]
-        ∨/(glen<4)∨0≠4|glen:'Invalid SHT_GROUP size'⎕SIGNAL 200
-
-        first←¯1↓+\0,1+count←¯1+glen÷4
-        words←323⎕DR∊(vx[gobj]+goff+⍳¨glen)(⊂⍛⌷)¨fb[vm[gobj]]
-        ∨/words[first]≠1:'Unsupported section group flags'⎕SIGNAL 200
-
-        member←~1@first⊢(≢words)⍴0 ⋄mem←member/words ⋄ owner←count/⍳≢gsh
-        ∨/~∧/(0<mem)∧mem<fhn[gobj[owner]]: 'Invalid section group member'⎕SIGNAL 200
-
-        gsymsh←fh0[gobj]+hl[gsh]
-        ∨/¯1=symbase[gsymsh]: 'SHT_GROUP does not reference a symbol table'⎕SIGNAL 200
-
-        lose←~≠sn[symbase[gsymsh]+hi[gsh]]
-        keep[lose/gsh]←0 ⋄ keep[(lose[owner])/mem+fh0[gobj[owner]]]←0
-
-        ss←¯1@(rows/⍨~keep[ss[rows←⍸ss≥0]])⊢ss
-        s←sn sb st so ss sv sz
-        s keep
-    }
-
-    ⍝ Select archive members required by direct objects
-    SELECT←{files need selected←⍵ ⋄ (fb view fh0 fhn)←files ⋄ (am ax an at alx alz recordmember membercount indexed firstrow)←archiveindex
-        0=≢am:(⍬ ⍬ ⍬)⍬ selected
-
-        ⍝ Preserve unresolved-symbol order while using dense archive-name IDs.
-        rows←firstrow[need] ⋄ rows←rows/⍨rows<≢indexed
-        rows←rows/⍨~selected[recordmember[rows]]
-        0=≢rows:(⍬ ⍬ ⍬)⍬ selected
-
-        ⍝ Several symbols can select the same archive member
-        rows←(≠indexed[rows])/rows
-        member←recordmember[rows] ⋄ first←≠member ⋄ rows←first/rows ⋄ member←first/member
-        new←~selected[member] ⋄ rows←new/rows ⋄ member←new/member
-        0=≢rows:(⍬ ⍬ ⍬)⍬ selected
-        selected[member]←1
-
-        thin←at[rows] ⋄ lx←alx[rows] ⋄ lz←alz[rows]
-        map←am[rows] ⋄ off←ax[rows] ⋄ limit←≢¨fb[map]
-        ∨/(off>limit)∨60>limit-off:'Archive member header outside archive'⎕SIGNAL 200
-
-        mh←(≢rows)60⍴0
-        _←{r←⍸map=⍵ ⋄ index←,off[r]∘.+⍳60
-            mh[r;]←(≢r)60⍴(⊃fb[⍵])[index] ⋄ ⍬}¨∪map
-        ∨/~mh[;58 59]∧.=96 10:'Invalid archive member header'⎕SIGNAL 200
-
-        digit←mh[;48+⍳10]
-        size←{d←⍵/⍨⍵≠32
-            ∨/~d∊48+⍳10:'Invalid archive member size'⎕SIGNAL 200
-            10⊥d-48
-        }¨↓digit
-        data←off+60
-        ∨/(~thin)∧size>limit-data:'Archive member data outside archive'⎕SIGNAL 200
-
-        tr←⍸thin
-        memberpaths←{i←⍵ ⋄ field←mh[i;⍳16] ⋄ field←field/⍨field≠32
-            0=≢field:'Empty thin archive member name'⎕SIGNAL 200
-
-            bytes←{
-                47≠⊃field:{
-                    47≠⊃¯1↑field:'Invalid thin archive member name'⎕SIGNAL 200
-                    ¯1↓field}⍬
-
-                digits←1↓field
-                (0=≢digits)∨∨/~digits∊48+⍳10:'Invalid thin archive long-name reference'⎕SIGNAL 200
-                ¯1=lx[i]:'Thin archive has no long-name table'⎕SIGNAL 200
-
-                x←10⊥digits-48
-                x≥lz[i]:'Thin archive long-name reference outside table'⎕SIGNAL 200
-                pool←(⊃fb[map[i]])[lx[i]+x+⍳lz[i]-x]
-                end←pool⍳10
-                end=≢pool:'Unterminated thin archive member name'⎕SIGNAL 200
-
-                name←end↑pool
-                (0=≢name)∨47≠⊃¯1↑name:'Invalid thin archive long name'⎕SIGNAL 200
-                ¯1↓name}⍬
-
-            path←⎕UCS bytes
-            47=⊃bytes:path
-            (⊃1⎕NPARTS paths[map[i]]),path
-        }¨tr
-
-        newfb←{0=≢⍵:⍬ ⋄ {83 ¯1⎕MAP⍵'R'}¨⍵}memberpaths
-        map[tr]←(≢fb)+⍳≢newfb ⋄ data[tr]←0 ⋄ size[tr]←≢¨newfb
-
-        ⍝Selected ELF views: mapping, file offset, size
-        (map data size)newfb selected
-    }
-
-    ⍝ Archive-member discovery step
-    (sn sb st so ss sv sz)←s ⋄ strong←sb∊1 10
-    sid←SLICEIDS files slices ⋄ nids←5⊃2⊃archiveindex ⋄ defmask←nids⍴0
-    ids←(strong∧ss≠¯1)/sid ⋄ defmask[(0≤ids)/ids]←1
-    need←∪(strong∧ss=¯1∧sid≥0)/sid ⋄ need←need/⍨~defmask[need]
-    hparts←,⊂h ⋄ sparts←,⊂s ⋄ bparts←,⊂symbase ⋄ nparts←,⊂slices ⋄ iparts←,⊂sid
-    hbase←≢⊃h ⋄ sbase←≢⊃s
-    (files hparts sparts bparts nparts iparts hbase sbase selected picked defmask need)←{(files hparts sparts bparts nparts iparts hbase sbase selected picked defmask need)←⍵
-        (selected newfb picked)←SELECT files need picked
-        0=≢⊃selected:files hparts sparts bparts nparts iparts hbase sbase selected picked defmask need
-
-        (ofb ov ofh0 ofhn)←files ⋄ fb←ofb,newfb
-        (nfiles nh)←1 ELF fb selected ⋄ (ns nb nn)←SYMBOLS nfiles nh
-        (ovm ovx ovz)←ov ⋄ (nfb nv nfh0 nfhn)←nfiles ⋄ (nvm nvx nvz)←nv
-        vbase←≢ovm
-
-        (nhn nht nhf nhm nhx nhz nha nhe nhl nhi)←nh ⋄ nhm+←vbase ⋄ nh←nhn nht nhf nhm nhx nhz nha nhe nhl nhi
-        (nsn nsb nst nso nss nsv nsz)←ns ⋄ nss←hbase∘+@{⍵≥0}⊢nss ⋄ ns←nsn nsb nst nso nss nsv nsz
-        nb←sbase∘+@{⍵≥0}⊢nb
-        view←(ovm,nvm)(ovx,nvx)(ovz,nvz) ⋄ files←fb view(ofh0,hbase+nfh0)(ofhn,nfhn)
-        hparts,←⊂nh ⋄ sparts,←⊂ns ⋄ bparts,←⊂nb ⋄ nparts,←⊂nn
-        hbase+←≢⊃nh ⋄ sbase+←≢⊃ns
-        nstrong←nsb∊1 10 ⋄ nid←SLICEIDS nfiles nn ⋄ iparts,←⊂nid
-        ids←(nstrong∧nss≠¯1)/nid ⋄ defmask[(0≤ids)/ids]←1
-        new←(nstrong∧nss=¯1∧nid≥0)/nid ⋄ need←∪need,new
-        need←need/⍨~defmask[need]
-
-        files hparts sparts bparts nparts iparts hbase sbase selected picked defmask need
-    }⍣{(_ _ _ _ _ _ _ _ selected _ _ _)←⍺ ⋄ 0=≢⊃selected}⊢files hparts sparts bparts nparts iparts hbase sbase(⍬ ⍬ ⍬)((7⊃archiveindex)⍴0)defmask need
-    h←⊃¨,/¨↓⍉↑hparts ⋄ s←⊃¨,/¨↓⍉↑sparts ⋄ symbase←∊bparts
-    pools←0⊃¨nparts ⋄ poolbase←¯1↓+\0,≢¨pools
-    slices←(∊pools)(∊poolbase+¨1⊃¨nparts)(∊2⊃¨nparts)
-    sid←∊iparts
-    hparts←sparts←bparts←nparts←iparts←⍬
-    ⍝ Intern object, DSO, archive and synthetic names into one exact dense domain.
-    (fb view fh0 fhn)←files
-    (sn sb st so ss sv sz)←s ⋄ (dobj dn db dt dvis dv dz)←ds
-    special←83⎕DR¨'_start' '_GLOBAL_OFFSET_TABLE_' '_init' '_fini'
-    (pool oat olen)←slices ⋄ x←dn,special ⋄ xlen←≢¨x
-    (alen arows amat aid atotal anids)←2⊃archiveindex
     (nbase nbytes objectid xid)←{
-        xaid←(≢x)⍴¯1
+        known←x≢⍛⍴¯1
+        ⍝ Reuse IDs already assigned by archive symbol indices.
         _←{0=anids:⍬ ⋄ _←{i←⍵ ⋄ q←⍸xlen=alen[i] ⋄ hit←(⊃amat[i])⍳((≢q),alen[i])⍴∊x[q]
-            found←hit<≢⊃aid[i] ⋄ xaid[found/q]←(⊃aid[i])[found/hit] ⋄ ⍬}¨⍳≢alen ⋄ ⍬}⍬
-        or←⍸(sid<0)∧olen>0 ⋄ xr←⍸xaid<0 ⋄ length←∪olen[or],xlen[xr]
-        ROWS←{value rows←⍵ ⋄ 0=≢rows:(≢length)⍴⊂⍬
+            found←hit<≢⊃aid[i] ⋄ known[found/q]←(⊃aid[i])[found/hit] ⋄ ⍬}¨⍳≢alen ⋄ ⍬}⍬
+
+        ⍝ Equal-width matrices make byte string interning data parallel.
+        sr←⍸(sid<0)∧olen>0 ⋄ xr←⍸known<0 ⋄ length←∪olen[sr],xlen[xr]
+        GROUPS←{value rows←⍵ ⋄ 0=≢rows:length≢⍛⍴⊂⍬
             p←⍋value[rows] ⋄ sorted←value[rows[p]] ⋄ present←∪sorted ⋄ group←sorted{⊂⍵}⌸rows[p]
             lookup←(1+⌈/0,length)⍴¯1 ⋄ lookup[present]←⍳≢present
             ((⊂⍬),group)[1+lookup[length]]}
-        orows←ROWS olen or ⋄ xrows←ROWS xlen xr
-        buckets←{i←⍵ ⋄ r←⊃orows[i] ⋄ q←⊃xrows[i] ⋄ width←length[i]
+        srows←GROUPS olen sr ⋄ xrows←GROUPS xlen xr
+
+        buckets←{i←⍵ ⋄ r←⊃srows[i] ⋄ q←⊃xrows[i] ⋄ width←length[i]
             matrix←((≢r),width)⍴pool[,oat[r]∘.+⍳width]
             matrix⍪←((≢q),width)⍴∊x[q]
             origin←matrix⍳matrix ⋄ first←(⍳≢matrix)=origin
             (first⌿matrix)(¯1+(+\first)[origin])(≢r)}¨⍳≢length
-        bytes←0⊃¨buckets ⋄ base←anids+¯1↓+\0,≢¨bytes
-        oid←sid ⋄ id←xaid
-        _←{r←⊃orows[⍵] ⋄ q←⊃xrows[⍵] ⋄ all←base[⍵]+1⊃⊃buckets[⍵]
-            oid[r]←(≢r)↑all ⋄ id[q]←(≢q)↑(≢r)↓all ⋄ ⍬}¨⍳≢length
+        bytes←0⊃¨buckets ⋄ base←anids+(+\-⊢)≢¨bytes
+        oid←sid ⋄ id←known
+        _←{r←⊃srows[⍵] ⋄ q←⊃xrows[⍵] ⋄ all←base[⍵]+1⊃⊃buckets[⍵]
+            oid[r]←r≢⍛↑all ⋄ id[q]←q≢⍛↑(≢r)↓all ⋄ ⍬}¨⍳≢length
+        ⍝ Preserve the archive names first, then append newly interned names.
         abase abytes←{0=anids:⍬ ⍬ ⋄ (⊃¨aid)({(≠⊃aid[⍵])⌿⊃amat[⍵]}¨⍳≢alen)}⍬
         (abase,base)(abytes,bytes)oid id
     }⍬
-    nname←+/≢¨nbytes ⋄ NAME←{b←nbase⍸⍵ ⋄ (⊃nbytes[b])[⍵-nbase[b];]}
-    nd←≢dn ⋄ sn←objectid ⋄ dn←nd↑xid ⋄ specialid←nd↓xid
-    s←sn sb st so ss sv sz ⋄ ds←dobj dn db dt dvis dv dz
-    slices←sid←archiveindex←⍬
 
-    (s seckeep)←COMDAT files h s symbase
-    r←RELOCATIONS files h symbase seckeep
-    symbase←⍬
+    nd←≢dn ⋄ sn←objectid ⋄ dn←nd↑xid ⋄ specialid←nd↓xid
+    n←⎕NS⍬ ⋄ n.(count base bytes special)←(+/≢¨nbytes)nbase nbytes specialid
+    (sn sb st sy ss sv sz)(dm dn db dt dy dv dz)n}
+
+⍝ Select one definition of each COMDAT group and rewrite discarded symbols.
+COMDAT←{files h s←⍵
+    (hn ht hf hm hx hz ha he hl hi hb)←h ⋄(fb fv fh fn)←files ⋄ (vm vx ve)←fv ⋄ (sn sb st sy ss sv sz)←s
+    keep←ht≢⍛⍴1
+    gsh←⍸ht=17 ⋄ gobj←hm[gsh] ⋄ goff←hx[gsh] ⋄ glen←hz[gsh]
+    ∨/(glen<4)∨0≠4|glen:'Invalid SHT_GROUP size'⎕SIGNAL 200
+
+    first←(+\-⊢)length←1+count←¯1+glen÷4
+    words←323⎕DR∊(vx[gobj]+goff+⍳¨glen)(⊂⍛⌷)¨fb[vm[gobj]]
+    ∨/words[first]≠1:'Unsupported section group flags'⎕SIGNAL 200
+
+    mem←(~1@first⊢words≢⍛⍴0)/words ⋄ owner←count/⍳≢gsh
+    ∨/~∧/(0<mem)∧mem<fn[gobj[owner]]: 'Invalid section group member'⎕SIGNAL 200
+
+    gsymsh←fh[gobj]+hl[gsh]
+    ∨/¯1=hb[gsymsh]: 'SHT_GROUP does not reference a symbol table'⎕SIGNAL 200
+
+    lose←~≠sn[hb[gsymsh]+hi[gsh]]
+    keep[lose/gsh]←0 ⋄ keep[(lose[owner])/mem+fh[gobj[owner]]]←0
+
+    ss←¯1@(rows/⍨~keep[ss[rows←⍸ss≥0]])⊢ss
+    (sn sb st sy ss sv sz)keep
+}
+
+⍝ Decode the relocations belonging to retained object sections.
+⍝ [r]elocation: target-[h]eader offset-[x] [s]ymbol [t]ype [a]ddend [k]ind
+RELOCATIONS←{files h keep←⍵ ⋄ (hn ht hf hm hx hz ha he hl hi hb)←h ⋄ (fb fv fh fn)←files ⋄ (vm vx ve)←fv
+    relash←⍸ht=4 ⋄ target←fh[hm[relash]]+hi[relash] ⋄ relash←(keep[relash]∧keep[target])/relash
+    relaobj←hm[relash] ⋄ relax←hx[relash] ⋄ relaz←hz[relash]
+    count←relaz÷24
+    ∨/24≠he[relash]:'Unexpected RELA entry size'⎕SIGNAL 200
+    ∨/0≠24|relaz:'Unexpected RELA section size'⎕SIGNAL 200
+
+    map←vm[relaobj] ⋄ src←vx[relaobj]+relax ⋄ dst←(+\-⊢)relaz ⋄ raw←(+/relaz)⍴0
+    _←{0=≢map:⍬ ⋄ _←{r←⍸map=⍵ ⋄ z←relaz[r] ⋄ at←(+\-⊢)z ⋄ batch←⌊at÷2*20
+        _←{q←(batch=⍵)/r ⋄ n←relaz[q] ⋄ base←(+\-⊢)n ⋄ i←⍳+/n
+            raw[i+n/dst[q]-base]←(⊃fb[map[⊃q]])[i+n/src[q]-base] ⋄ ⍬}¨∪batch ⋄ ⍬}¨∪map ⋄ ⍬}⍬
+    words←(+/count)6⍴323⎕DR raw
+    rx←words U64 0 ⋄ rt←U32 words[;2] ⋄ ra←words S64 4
+    own←count/⍳≢count ⋄ rh←(fh[relaobj]+hi[relash])[own]
+
+    symsh←fh[relaobj]+hl[relash] ⋄ base←hb[symsh]
+    ∨/¯1=base:'RELA does not reference a symbol table'⎕SIGNAL 200
+    rs←base[own]+U32 words[;3]
+    rh rx rs rt ra
+}
+
+⍝ Discover the complete object set and discard parsing-only representations.
+⍝ Returns f: mapped files ⋄ h: sections ⋄ s: symbols ⋄ ds: DSO symbols ⋄ r: relocations.
+OBJECTS←{(paths archives files h ds)←⍵
+    ar←AR∆INDEX archives files
+    (files h s slices sid)←AR∆MEMBERS ar paths files h
+    (s ds n)←INTERN ar slices sid s ds
+    (s seckeep)←COMDAT files h s
+    r←RELOCATIONS files h seckeep
 
     ⍝ Discard dead COMDAT sections once and globalise every surviving section reference.
+    ⍝ secid: original section row → retained section row.
     secid←¯1++\seckeep
-    (sn sb st so ss sv sz)←s ⋄ rows←⍸ss≥0 ⋄ ss[rows]←secid[ss[rows]] ⋄ s←sn sb st so ss sv sz
+    (sn sb st sy ss sv sz)←s ⋄ ss←{secid[⍵]}@{⍵≥0}⊢ss ⋄ s←sn sb st sy ss sv sz
     (rh rx rs rt ra)←r ⋄ rh←secid[rh] ⋄ r←rh rx rs rt ra
     h←seckeep∘/¨h
 
-    ⍝ Symbol resolution
-    (r ri imports common startsym)←{(s ds r)←⍵ ⋄ (rh rx rs rt ra)←r
-        (sn sb st so ss sv sz)←s ⋄ (dobj dn db dt dvis dv dz)←ds
+    ⍝ After parsing is complete normalize every section to a mapped file and absolute offset.
+    (fb fv _ _)←files ⋄ (vm vx ve)←fv
+    (hn ht hf hm hx hz ha he hl hi hb)←h
+    hx←vx[hm]+hx ⋄ hm←vm[hm] ⋄ h←hn ht hf hm hx hz ha he hl hi hb ⋄ f←fb
+    f h s ds r n
+}
 
-        reg←ss≥0 ⋄ abs←ss=¯2 ⋄ com←ss=¯3
-        weak←sb=2 ⋄ strong←(sb=1)∨sb=10 ⋄ ext←strong∨weak
-        defd←reg∨abs∨com
-        sid←sn ⋄ gotdef←sn=1⊃specialid
-        ∨/~≠(strong∧defd∧~com)/sn:'Multiple strong symbol definitions'⎕SIGNAL 200
+⍝ Allocate and normalize COMMON symbols in NOBITS section.
+COMMONS←{h s def byname←⍵
+    (hn ht hf hm hx hz ha he hl hi hb)←h ⋄ (sn sb st sy ss sv sz)←s
+    com←ss=¯3 ⋄ ext←sb∊1 2
 
-        def←⍸ext∧defd ⋄ def←def[⍋com[def]+2×weak[def]] ⋄ def←(≠sid[def])/def
+    ⍝ Allocate selected common definitions inside one synthetic NOBITS section.
+    cdef←def/⍨com[def] ⋄ crow←⍸ext∧com
+    cid←sn[cdef]⍳sn[crow]
+    cid←(keep←cid<≢cdef)/cid ⋄ crow←keep/crow ⋄ ids←∪cid
+    cz←(cid{⌈/⍵}⌸sz[crow])@ids⊢cdef≢⍛⍴0
+    ca←(cid{⌈/⍵}⌸sv[crow])@ids⊢cdef≢⍛⍴1
+    local←⍸com∧~ext ⋄ nc←≢cdef
+    _ coff comsize←0 LAYOUT((nc+≢local)⍴0)(cz,sz[local])(ca,sv[local])
 
-        zero←≢sn ⋄ byname←def@(sid[def])⊢nname⍴zero
+    ⍝ UND and ABS are zero address pseudo sections; COMMON is ordinary BSS.
+    hund habs hcom←(≢ht)+⍳3
+    ss[⍸ss=¯2]←habs
+    rows←⍸com∧ext ⋄ chosen←byname[sn[rows]] ⋄ ci←sn[cdef]⍳sn[chosen]
+    common←ci<≢cdef
+    ss[common/rows]←hcom ⋄ sv[common/rows]←coff[common/ci]
+    ss[(~common)/rows]←ss[(~common)/chosen] ⋄ sv[(~common)/rows]←sv[(~common)/chosen]
+    ss[local]←hcom ⋄ sv[local]←nc↓coff
 
-        ⍝ Resolve external symbol rows against objects, then DSOs.
-        erow←⍸ext∧~defd ⋄ local←byname[sid[erow]] ⋄ drow←dn⍳sn[erow]
-        dynamic←(local=zero)∧drow<≢dn ⋄ missing←(local=zero)∧~dynamic ⋄ required←gotdef[erow]⍱weak[erow]∧0=so[erow]
-        ∨/missing∧required:'Undefined symbol'⎕SIGNAL 200
+    h←(hn,0 0 0 ⋄ ht,0 0 8 ⋄ hf,0 0 3 ⋄ hm,0 0 0 ⋄ hx,0 0 0
+       hz,0 0 comsize ⋄ ha,1 1(1⌈⌈/1,ca) ⋄ he,0 0 0 ⋄ hl,0 0 0 ⋄ hi,0 0 0 ⋄ hb,¯1 ¯1 ¯1)
+    h(sn sb st sy ss sv sz)
+}
 
-        ⍝ Deduplicate imports in first-occurence order.
-        isym←dynamic/erow ⋄ idrow←dynamic/drow
-        in←∪sn[isym] ⋄ ii←in⍳sn[isym]
-        idrow←idrow[ii⍳⍳≢in]
-        imports←(in⋄db[idrow]⋄dobj[idrow]⋄dt[idrow]⋄dz[idrow])
+⍝ Resolve symbols and replace special section indices by real section rows.
+⍝ Extends s with (DSO dynsym PLT GOT TLS), then redirects every relocation once.
+RESOLVE←{n h s ds r←⍵ ⋄ (rh rx rs rt ra)←r
+    (hn ht hf hm hx hz ha he hl hi hb)←h
+    (sn sb st sy ss sv sz)←s ⋄ (dm dn db dt dy dv dz)←ds
 
-        ⍝ Map symbol rows and then relocations to imports.
-        simport←ii@isym⊢sn≢⍛⍴¯1 ⋄ ri←simport[rs]
+    reg←ss≥0 ⋄ abs←ss=¯2 ⋄ com←ss=¯3
+    weak←sb=2 ⋄ strong←sb=1 ⋄ ext←strong∨weak
+    defd←reg∨abs∨com
+    gotdef←sn=(n.special)[SPECIAL∆GOT]
+    ∨/~≠(strong∧defd∧~com)/sn:'Multiple strong symbol definitions'⎕SIGNAL 200
 
-        ⍝ Redirect locally resolved relocation symbols.
-        rdef←rs ⋄ refs←rdef[rows←⍸ext[rdef]∧~gotdef[rdef]]
-        resolved←byname[sid[refs]] ⋄ imported←simport[refs]≥0
-        rdef←zero@(imported/rows)⊢resolved@rows⊢rdef
-        real←rdef≠zero
-        ∨/st[real/rdef]=10:'GNU IFUNC relocation is not supported yet'⎕SIGNAL 200
+    def←⍸ext∧defd ⋄ def←def[⍋com[def]+2×weak[def]] ⋄ def←(≠sn[def])/def
 
-        ⍝ Identify entry point
-        startsym←byname[0⊃specialid]
-        startsym=zero:'Undefined symbol: _start'⎕SIGNAL 200
+    ⍝ byname: interned name ID → selected object definition, or none.
+    none←≢sn ⋄ byname←def@(sn[def])⊢n.count⍴none
 
-        ⍝ Common symbols
-        cdef←def/⍨com[def] ⋄ crow←⍸ext∧com
-        cid←sid[cdef]⍳sid[crow]
-        cid←(keep←cid<≢cdef)/cid ⋄ crow←keep/crow ⋄ ids←∪cid
-        cz←(cid{⌈/⍵}⌸sz[crow])@ids⊢(≢cdef)⍴0
-        ca←(cid{⌈/⍵}⌸sv[crow])@ids⊢(≢cdef)⍴1
+    ⍝ Resolve external symbol rows against objects, then DSOs.
+    urow←⍸ext∧~defd ⋄ local←byname[sn[urow]] ⋄ drow←dn⍳sn[urow]
+    imp←(local=none)∧(drow<≢dn) ⋄ required←gotdef[urow]⍱(weak[urow]∧0=sy[urow])
+    ∨/(local=none)∧(~imp)∧required:'Undefined symbol'⎕SIGNAL 200
 
-        r←rh rx rdef rt ra ⋄ common←cdef cz ca
-        r ri imports common startsym
-    }s ds r
+    ⍝ Deduplicate imports in first occurrence order.
+    isym←imp/urow ⋄ idrow←imp/drow
+    in←∪sn[isym] ⋄ ii←in⍳sn[isym]
+    idrow←idrow[ii⍳⍳≢in]
+    ib im it iy iz←(db[idrow])(dm[idrow])(dt[idrow])(dy[idrow])(dz[idrow])
 
-    ⍝ Dynamic relocation plan
-    dplan←{(h r ri imports)←⍵ ⋄ (hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r ⋄ (in ib idso it iz)←imports
-        backed←(ht≠8)∧2|⌊hf÷2 ⋄ live←backed[rh] ⋄ imported←ri≥0 ⋄ gottypes←9 41 42
+    ⍝ Begin the symbol row redirection map with appended import rows.
+    ns←≢sn ⋄ irow←1+ns+⍳≢in ⋄ redirect←irow[ii]@isym⊢⍳ns
 
-        use←live∧imported
-        ∨/use∧~rt∊1 4 19,gottypes:'Unsupported dynamic relocation type'⎕SIGNAL 200
+    ⍝ redirect: original symbol row → object, import, or zero row.
+    use←~gotdef[urow]
+    ∨/st[(use∧local≠none)/local]=10:'GNU IFUNC relocation is not supported yet'⎕SIGNAL 200
+    target←local ⋄ target[⍸imp]←redirect[imp/urow]
+    redirect[use/urow]←use/target ⋄ rdef←redirect[rs]
 
-        pltimport←∪ri/⍨use∧rt=4 ⋄ gotimport←∪ri/⍨use∧rt∊gottypes
-        zero←≢⊃s
-        localgotsym←∪rs/⍨live∧(~imported)∧rt∊gottypes
-        gdimport←∪ri/⍨use∧rt=19 ⋄ hasld←live∨.∧rt=20
+    ⍝ Identify entry point
+    startsym←byname[(n.special)[SPECIAL∆START]]
+    startsym=none:'Undefined symbol: _start'⎕SIGNAL 200
 
-        symbolic←⍸use∧rt=1 ⋄ relative←⍸o.pie∧live∧(~imported)∧(rs≠zero)∧rt=1
+    ⍝ Normalize COMMON and append the three synthetic section rows.
+    (h s)←COMMONS h s def byname
+    (sn sb st sy ss sv sz)←s ⋄ hund←(≢⊃h)-3
 
-        ip←(⍳≢pltimport)@pltimport⊢in≢⍛⍴¯1 ⋄ ig←(⍳≢gotimport)@gotimport⊢in≢⍛⍴¯1
-        lg←(⍳≢localgotsym)@localgotsym⊢¯1⍴⍨1+≢⊃s ⋄ igt←(⍳≢gdimport)@gdimport⊢in≢⍛⍴¯1
+    ⍝ Redirect undefined rows to their local definition or the UND pseudo row.
+    found←local≠none
+    ss[found/urow]←ss[found/local] ⋄ sv[found/urow]←sv[found/local]
+    ss[(~found)/urow]←hund ⋄ sv[(~found)/urow]←0
+    undef←ss=¯1 ⋄ ss[⍸undef]←hund ⋄ sv[⍸undef]←0
 
-        pltimport gotimport localgotsym gdimport hasld symbolic relative ip ig lg igt
-    }h r ri imports
+    ⍝ Append imports once, in relation order.
+    count←1+ns+≢in ⋄ nn←n.count
+    s←(sn,nn,in ⋄ sb,0,ib ⋄ st,0,it ⋄ sy,0,iy ⋄ ss,hund,in≢⍛⍴hund
+       sv,(1+≢in)⍴0 ⋄ sz,0,iz ⋄ ((1+ns)⍴¯1),im ⋄ ((1+ns)⍴¯1),1+⍳≢in
+       count⍴¯1 ⋄ count⍴¯1 ⋄ count⍴¯1)
+    r←rh rx rdef rt ra
+    h s r startsym
+}
 
-    ⍝ Dynamic symbols and strings
-    dynamic←{(imports dplan)←⍵ ⋄ (in ib idso it iz)←imports ⋄ (sm sx sz)←shared
-        (pltimport gotimport localgotsym gdimport hasld symbolic relative ip ig lg igt)←dplan
+⍝ Assign each referenced symbol its PLT, GOT, or TLS descriptor slot.
+⍝ Extended [s]ymbol: DSO-[m]ap dynsym-[i]ndex [p]LT [g]OT TLS-inde[x] [a]ddress
+SLOTS←{o h s r←⍵ ⋄ (hn ht hf hm hx hz ha he hl hi hb)←h
+    (sn sb st sy ss sv sz sm si sp sg sx)←s ⋄ (rh rx rs rt ra)←r
+    backed←(ht≠SHT∆NOBITS)∧2|⌊hf÷SHF∆ALLOC ⋄ live←backed[rh] ⋄ imported←sm[rs]≥0 ⋄ gottypes←9 41 42
 
-        used←(⍳≢sm)∊idso ⋄ dkeep←used∨~optional[sm] ⋄ neededname←dkeep/soname
+    use←live∧imported
+    ∨/use∧~(rt∊1 4 19,gottypes):'Unsupported dynamic relocation type'⎕SIGNAL 200
 
-        strings←(NAME¨in),neededname ⋄ x←1+¯1↓+\0,len←1+≢¨strings
-        ix←in≢⍛↑x ⋄ nx←in≢⍛↓x ⋄ dynstr←0,∊{⍵,0}¨strings
-        n←≢in ⋄ at←24+24×⍳n
-        info←it+16×ib ⋄ info←info-256×info≥128
-        dynsym←(8SB iz)@(,at∘.+16+⍳8)⊢info@(at+4)⊢(4SB ix)@(,at∘.+⍳4)⊢(24×1+n)⍴0
+    plt←∪rs/⍨use∧(rt=4) ⋄ gi←∪rs/⍨use∧rt∊gottypes
+    gl←∪rs/⍨live∧(~imported)∧rt∊gottypes
+    gd←∪rs/⍨use∧(rt=19) ⋄ hasld←∨/live∧rt=20
 
-        dkeep nx dynstr dynsym
-    }imports dplan
+    rk←rt≢⍛⍴0 ⋄ rk[⍸use∧(rt=1)]←1 ⋄ rk[⍸o.pie∧live∧(~imported)∧(rt=1)]←2 ⋄ rk[⍸live∧(rt=20)]←3
 
-    ⍝ Lifecycle inputs
-    life←{(s h)←⍵ ⋄ (sn sb st so ss sv sz)←s ⋄ (hn ht hf hm hx hz ha he hl hi)←h
-        live←ss≥0
+    sp[plt]←⍳≢plt
+    sg[gi]←(≢plt)+⍳≢gi
+    sg[gl]←(≢plt)+(≢gi)+⍳≢gl
+    sx[gd]←hasld+⍳≢gd
+    (sn sb st sy ss sv sz sm si sp sg sx)(rh rx rs rt ra rk)
+}
 
-        ROW←{r←⍸live∧sn=⍵ ⋄ ⊃r,¯1}
-        initrow←ROW 2⊃specialid ⋄ finirow←ROW 3⊃specialid
-        initsec←⍸ht=14 ⋄ finisec←⍸ht=15
-        initrow finirow initsec finisec
-    }s h
+⍝ Build dynamic tables and their final sizes.
+DYNAMIC←{o shared optional soname h s r n←⍵ ⋄ special←n.special
+    name←{b←n.base⍸⍵ ⋄ (⊃n.bytes[b])[⍵-n.base[b];]}
+    (sn sb st sy ss sv sz sm si sp sg sx)←s ⋄ (hn ht hf hm hx hz ha he hl hi hb)←h
+    (rh rx rs rt ra rk)←r ⋄ (fm fx fz)←shared
+    d←⎕NS⍬
 
-    ⍝ Generated dynamic sections
-    dynparts←{(imports dplan dynamic)←⍵ ⋄ (in ib idso it iz)←imports ⋄ (dkeep nx dynstr dynsym)←dynamic
-        (pltimport gotimport localgotsym gdimport hasld symbolic relative ip ig lg igt)←dplan
-        (initrow finirow initsec finisec)←life
-        nlife←(initrow≥0)+(finirow≥0)+2×(0<≢initsec)+0<≢finisec
-        (nplt nglob ngd nlocal)←≢¨pltimport gotimport gdimport localgotsym ⋄ ntlsdesc←hasld+ngd
+    imp←⍸sm≥0 ⋄ used←(⍳≢fm)∊sm[imp] ⋄ keep←used∨~optional[fm]
+    strings←(name¨sn[imp]),keep/soname ⋄ x←1+(+\-⊢)len←1+≢¨strings
+    ix←imp≢⍛↑x ⋄ d.need←(≢imp)↓x ⋄ d.str←0,∊(,∘0)¨strings
+    ni←≢imp ⋄ at←24+24×⍳ni
+    info←st[imp]+16×sb[imp] ⋄ info←info-256×info≥128
+    d.sym←(8SB sz[imp])@(,at∘.+16+⍳8)⊢info@(at+4)⊢(4SB ix)@(,at∘.+⍳4)⊢(24×1+ni)⍴0
 
-        local←localgotsym≠≢⊃s
-        nrela←nglob+(o.pie×+/local)+(≢symbolic)+(≢relative)+ntlsdesc+ngd
-        hasdynamic←∨/dkeep
-        interp←83⎕DR o.interp,⎕UCS 0
-        hash←4SB 1 ndynsym(×≢in),(2+⍳0⌈(≢in)-1)@(1+⍳0⌈(≢in)-1)⊢0⍴⍨ndynsym←1+≢in
+    und abs←(≢ht)-3 2
+    defined←(~ss∊und abs)/sn
+    hasinit hasfini←special[SPECIAL∆INIT SPECIAL∆FINI]∊defined
+    nlife←hasinit+hasfini+2×(∨/ht=SHT∆INITARRAY)+(∨/ht=SHT∆FINIARRAY)
+    nplt←+/sp≥0 ⋄ nglob←+/(sg≥0)∧sm≥0 ⋄ nlocal←+/(sg≥0)∧sm<0
+    ngd←+/sx≥0 ⋄ ntlsdesc←(∨/rk=3)+ngd
+    local←(sg≥0)∧(sm<0)∧(ss≠und)
+    nrela←nglob+(o.pie×+/local)+(+/rk=1)+(+/rk=2)+ntlsdesc+ngd
 
-        plt←0⍴⍨16×nplt ⋄ relaplt←0⍴⍨24×nplt ⋄ dynrela←0⍴⍨24×nrela
-        got←0⍴⍨8×nplt+nglob+nlocal+2×ntlsdesc ⋄ dyntab←0⍴⍨16×12+nlife+(3××nrela)+≢nx
+    d.emit←∨/keep
+    d.interp←83⎕DR o.interp,⎕UCS 0
+    d.hash←4SB 1 ndynsym(×ni),(2+⍳0⌈ni-1)@(1+⍳0⌈ni-1)⊢0⍴⍨ndynsym←1+ni
 
-        hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab
-    }imports dplan dynamic
+    ⍝ d.size follows the GEN∆ section arena.
+    d.size←(≢d.interp)(16×nplt)(≢d.hash)(≢d.sym)(≢d.str)(24×nplt)(24×nrela)
+    d.size,←(8×nplt+nglob+nlocal+2×ntlsdesc)(16×12+nlife+(3××nrela)+≢d.need)
+    d}
 
-    ⍝ Layout
+⍝ Assign output slices to allocatable input and generated sections.
+IMAGE←{o d special h s startsym←⍵
+    im←⎕NS⍬
     base←4194304×~o.pie
-    (layout copies sections segments)←{(h s common startsym)←⍵
-        (hn ht hf hm hx hz ha he hl hi)←h ⋄ (sn sb st so ss sv sz)←s ⋄ (cs cz ca)←common
-        (fb view fh0 fhn)←files ⋄ (vm vx vz)←view
-        (hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab)←dynparts
-        gen←hasdynamic/interp plt hash dynsym dynstr relaplt dynrela got dyntab ⋄ gensize←≢¨gen
-        gengroup←hasdynamic/3 1 3 3 3 3 3 4 4 ⋄ genalign←hasdynamic/1 16 8 8 1 8 8 8 8
+    (hn ht hf hm hx hz ha he hl hi hb)←h ⋄ (sn sb st sy ss sv sz sm si sp sg sx)←s
+    gensize←(d.emit)/d.size
 
-        alloc←2|⌊hf÷2 ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
-        secz←hz[secs] ⋄ seca←1⌈ha[secs]
+    alloc←2|⌊hf÷SHF∆ALLOC ⋄ secs←⍸alloc ⋄ flags←hf[secs] ⋄ type←ht[secs]
+    secz←hz[secs] ⋄ seca←1⌈ha[secs]
 
-        write←2|flags ⋄ exec←2|⌊flags÷4
-        ∨/write∧exec:'Writable executable sections are not supported'⎕SIGNAL 200
-        ∨/~seca∊2*⍳63:'Unsupported section alignment'⎕SIGNAL 200
+    write←2|⌊flags÷SHF∆WRITE ⋄ exec←2|⌊flags÷SHF∆EXEC
+    ∨/write∧exec:'Writable executable sections are not supported'⎕SIGNAL 200
+    ∨/~seca∊2*⍳63:'Unsupported section alignment'⎕SIGNAL 200
 
-        nobits←type=8 ⋄ tls←1024≤2048|flags
-        group←9@{nobits∧~tls}⊢8@{tls∧nobits}⊢7@{tls∧~nobits}⊢6@{type=15}⊢5@{type=14}⊢2@{type=257}⊢0@{type=256}⊢1+write+2×~exec
-        group,←(cs≢⍛⍴9),gengroup ⋄ size←secz,cz,gensize ⋄ align←seca,ca,genalign
+    ⍝ Every allocatable input and generated section becomes one layout item.
+    nobits←type=SHT∆NOBITS ⋄ tls←2|⌊flags÷SHF∆TLS
+    group←KIND∆TEXT+write+2×~exec
+    types←SHT∆INIT SHT∆FINI SHT∆INITARRAY SHT∆FINIARRAY
+    kinds←KIND∆INIT KIND∆FINI KIND∆INITARRAY KIND∆FINIARRAY
+    rows←⍸type∊types ⋄ group[rows]←kinds[types⍳type[rows]]
+    rows←⍸nobits ⋄ group[rows]←KIND∆BSS-tls[rows]
+    group[⍸tls∧~nobits]←KIND∆TDATA
+    group,←(d.emit)/GEN∆KIND ⋄ size←secz,gensize ⋄ align←seca,(d.emit)/GEN∆ALIGN
 
-        ⍝ Segments
-        ne←0<size ⋄ seg←(group=3)+2×group≥4 ⍝RX=0,R=1,RW=2
-        class←0 1 2∩ne/seg ⋄ hastls←∨/group∊7 8 ⋄ segstart←{⊃⍸seg=⍵}¨class
-        hdrsz←64+56×1+(≢class)+3×hasdynamic+hastls ⋄ lalign←4096∘⌈@segstart⊢align
+    ⍝ Output group determines both stable section order and PT_LOAD class.
+    seg←KIND∆SEG[group] ⍝ RX=0, R=1, RW=2
+    class←0 1 2∩(0<size)/seg ⋄ hastls←∨/group∊KIND∆TDATA KIND∆TBSS
+    hdrsz←64+56×1+(≢class)+(3×d.emit)+hastls ⋄ lalign←4096∘⌈@({⊃⍸seg=⍵}¨class)⊢align
 
-        ⍝ Actual layouting
-        (order rel memsz)←hdrsz LAYOUT group size lalign ⋄ nsec←≢secs
-        secrel←nsec↑rel ⋄ rest←nsec↓rel
-        comrel←cs≢⍛↑rest ⋄ genrel←cs≢⍛↓rest
+    ⍝ LAYOUT assigns every item one file-relative slice.
+    (_ rel _)←hdrsz LAYOUT group size lalign ⋄ nsec←≢secs
+    secrel←nsec↑rel ⋄ genrel←nsec↓rel
 
-        file←~nobits ⋄ filesec←file/secs
-        foff←file/secrel ⋄ fsz←hz[filesec]
+    filesec←(~nobits)/secs
+    foff←(~nobits)/secrel
 
-        src←hm[filesec]
-        copies←(vm[src])(vx[src]+hx[filesec])fsz foff
+    shoff←foff@filesec⊢ht≢⍛⍴¯1
+    shaddr←(base+secrel)@secs⊢ht≢⍛⍴0
 
-        shoff←foff@filesec⊢(≢ht)⍴¯1
-        shaddr←(base+secrel)@secs⊢(≢ht)⍴0
-        filesz←⌈/hdrsz,(foff+fsz),genrel+gensize
+    symaddr←shaddr[ss]+sv
+    symaddr[⍸sn=special[SPECIAL∆GOT]]←base+GEN∆GOT⊃9↑genrel,9⍴0 ⋄ symaddr,←0
 
-        reg←ss≥0 ⋄ abs←ss=¯2
-        symaddr←reg\(shaddr[reg/ss]+reg/sv) ⋄ symaddr[⍸abs]←abs/sv
-        symaddr[cs]←base+comrel ⋄ symaddr[⍸sn=1⊃specialid]←base+7⊃9↑genrel,9⍴0 ⋄ symaddr,←0
+    im.(sec group size align rel)←secs group size align rel
+    im.(entry off addr)←(symaddr[startsym])genrel(base+genrel)
+    h←hn ht hf hm hx hz ha he hl hi hb shoff shaddr
+    s←sn sb st sy ss sv sz sm si sp sg sx symaddr
+    h s im
+}
 
-        ⍝ Segments continuation
-        span←{
-            m←seg=⍵ ⋄ x←⌊/m/rel
-            fz←(⌈/x,(m∧~group∊8 9)/(rel+size))-x
-            mz←(⌈/m/(rel+size))-x
-            x fz mz
-        }¨class
+⍝ Derive section and program headers from final section coordinates.
+HEADERS←{o d h im←⍵
+    sh←⎕NS⍬ ⋄ base←4194304×~o.pie
+    (hn ht hf hm hx hz ha he hl hi hb ho hv)←h
+    secs allgroup size align rel←im.(sec group size align rel)
+    nsec←≢secs ⋄ group←nsec↑allgroup ⋄ secz←nsec↑size ⋄ seca←nsec↑align ⋄ secrel←nsec↑rel
+    gensize←nsec↓size ⋄ genalign←nsec↓align ⋄ genrel←nsec↓rel ⋄ nobits←ht[secs]=SHT∆NOBITS
 
-        px←0,0⊃¨span ⋄ pfz←hdrsz,1⊃¨span ⋄ pmz←hdrsz,2⊃¨span ⋄ pv←base+px
-        pt←(≢px)⍴1 ⋄ pf←4,5 4 6[class] ⋄ pa←(≢px)⍴4096
+    seg←KIND∆SEG[allgroup]
+    class←0 1 2∩(0<size)/seg ⋄ hastls←∨/allgroup∊KIND∆TDATA KIND∆TBSS
+    hdrsz←64+56×1+(≢class)+(3×d.emit)+hastls
 
-        ⍝ Output sections
-        regular←order/⍨order<nsec+≢cs
-        g←group[regular] ⋄ x←rel[regular] ⋄ zsize←size[regular] ⋄ zalign←align[regular]
-        first←≠g ⋄ last←1⌽first ⋄ groups←first/g
+    ⍝ Each run of input groups becomes one output section.
+    regular←⍋group ⋄ g←group[regular] ⋄ x←secrel[regular]
+    zsize←secz[regular] ⋄ zalign←seca[regular]
+    first←2≠/¯1,g ⋄ last←2≠/g,¯1 ⋄ groups←first/g
+    secoff←first/x ⋄ secsz←secoff-⍨last/x+zsize ⋄ secalign←g{⌈/⍵}⌸zalign ⋄ secaddr←base+secoff
+    sectype←KIND∆TYPE[groups] ⋄ secflags←KIND∆FLAGS[groups]
+    seclink←groups≢⍛⍴0 ⋄ secinfo←groups≢⍛⍴0
+    secentsize←KIND∆ENTSIZE[groups] ⋄ secnames←KIND∆NAME[groups]
 
-        secoff←first/x ⋄ secsz←secoff-⍨last/x+zsize ⋄ secalign←g{⌈/⍵}⌸zalign ⋄ secaddr←base+secoff
-        sectype←(1 1 1 1 1 14 15 1 8 8)[groups] ⋄ secflags←(6 6 6 2 3 3 3 1027 1027 3)[groups]
-        seclink←groups≢⍛⍴0 ⋄ secinfo←groups≢⍛⍴0 ⋄ secentsize←(0 0 0 0 0 8 8 0 0 0)[groups]
-        secnames←('.init' '.text' '.fini' '.rodata' '.data' '.init_array' '.fini_array' '.tdata' '.tbss' '.bss')[groups]
+    ⍝ Append generated sections and their cross-references.
+    dsndx←4+≢groups ⋄ dstrndx←5+≢groups
+    secoff,←genrel ⋄ secaddr,←base+genrel ⋄ secsz,←gensize ⋄ secalign,←genalign
+    sectype,←(d.emit)/GEN∆TYPE ⋄ secflags,←(d.emit)/GEN∆FLAGS
+    seclink,←(d.emit)/0 0 dsndx dstrndx 0 dsndx dsndx 0 dstrndx
+    secinfo,←(d.emit)/0 0 0 1 0(8+≢groups)0 0 0 ⋄ secentsize,←(d.emit)/GEN∆ENTSIZE ⋄ secnames,←(d.emit)/GEN∆NAME
 
-        ⍝Generated dynamic sections
-        gennames←hasdynamic/'.interp' '.plt' '.hash' '.dynsym' '.dynstr' '.rela.plt' '.rela.dyn' '.got' '.dynamic'
-        genndx←1+(≢groups)+⍳≢gennames
+    names←secnames,⊂'.shstrtab' ⋄ nameoff←1+(+\-⊢)len←1+≢¨names
+    sh.str←z,∊names,¨z←⎕UCS 0 ⋄ secname←¯1↓nameoff ⋄ sh.name←⊃⌽nameoff
+    filesz←⌈/hdrsz,((~nobits)/secrel+secz),genrel+gensize
+    sh.stroff←filesz ⋄ sh.offset←8ALIGN sh.stroff+≢sh.str
+    sh.count←2+≢secnames ⋄ sh.strindex←1+≢secnames
+    sh.rows←secname sectype secflags secaddr secoff secsz secalign seclink secinfo secentsize
+    im.size←sh.offset+64×sh.count
 
-        gentype←hasdynamic/1 1 5 11 3 4 4 1 6 ⋄ genflags←hasdynamic/2 6 2 2 2 2 2 3 3
-        genentsize←hasdynamic/0 16 4 24 0 24 24 8 16 ⋄ gotndx←8+≢groups ⋄ geninfo←hasdynamic/0 0 0 1 0 gotndx 0 0 0
-        dsndx←4+≢groups ⋄ dstrndx←5+≢groups
-        genlink←hasdynamic/0 0 dsndx dstrndx 0 dsndx dsndx 0 dstrndx
+    ⍝ PT_LOAD extents are a projection of the same layout rows.
+    span←{m←seg=⍵ ⋄ x←⌊/m/rel
+        fz←(⌈/x,(m∧~(allgroup∊KIND∆TBSS KIND∆BSS))/(rel+size))-x
+        mz←(⌈/m/(rel+size))-x ⋄ x fz mz}¨class
+    px←0,0⊃¨span ⋄ pz←hdrsz,1⊃¨span ⋄ pm←hdrsz,2⊃¨span ⋄ pv←base+px
+    pt←px≢⍛⍴1 ⋄ pf←4,5 4 6[class] ⋄ pa←px≢⍛⍴4096
+    dynph←{~d.emit:8⍴⊂⍬
+        x←genrel[GEN∆INTERP GEN∆DYNAMIC] ⋄ z←gensize[GEN∆INTERP GEN∆DYNAMIC]
+        (3 2)(4 6)x(base+x)(base+x)z z(1 8)}⍬
+    ph←(pt pf px pv pv pz pm pa),¨dynph
+    tlsph←{~hastls:8⍴⊂⍬
+        m←allgroup∊KIND∆TDATA KIND∆TBSS ⋄ fz←(⌈/x,(allgroup=KIND∆TDATA)/rel+size)-x←⌊/m/rel
+        mz←(⌈/m/rel+size)-x ⋄ a←⌈/m/align
+        (,7)(,4)(,x)(,base+x)(,base+x)(,fz)(,mz)(,a)
+    }⍬
+    ph←ph,¨tlsph
+    phdr←{~d.emit:8⍴⊂⍬
+        z←56×1+≢⊃ph
+        (,6)(,4)(,64)(,base+64)(,base+64)(,z)(,z)(,8)}⍬
+    ph←phdr,¨ph ⍝ [p]rogram header: [t]ype [f]lags offset-[x] [v]addr [p]addr file-si[z]e [m]emsz [a]lign
+    im sh ph
+}
 
-        secoff,←genrel ⋄ secaddr,←base+genrel ⋄ secsz,←gensize ⋄ secalign,←genalign ⋄ sectype,←gentype
-        secflags,←genflags ⋄ seclink,←genlink ⋄ secinfo,←geninfo ⋄ secentsize,←genentsize ⋄ secnames,←gennames
+⍝ Write resulting image.
+WRITE←{o f h s r special d im sh ph←⍵
+    out←im.size OUT∆INIT o.out
 
-        names←secnames,⊂'.shstrtab' ⋄ nameoff←1+¯1↓+\0,1+≢¨names
-        shstr←z,∊names,¨z←⎕UCS 0 ⋄ secname←¯1↓nameoff ⋄ shstrname←⊃⌽nameoff
-
-        shstroff←filesz ⋄ shtoff←8ALIGN shstroff+≢shstr ⋄ shnum←2+≢secnames ⋄ shstrndx←1+≢secnames
-
-        outfilesz←shtoff+64×shnum ⋄ entry←symaddr[startsym]
-        dynlayout←genrel(base+genrel)
-        layout←shoff shaddr symaddr filesz memsz entry dynlayout
-        osec←secname sectype secflags secaddr secoff secsz secalign seclink secinfo secentsize
-        special←{~hasdynamic:8⍴⊂⍬
-            x←genrel[0 8] ⋄ z←gensize[0 8]
-            (3 2)(4 6)x(base+x)(base+x)z z(1 8)}⍬
-        segments←(pt pf px pv pv pfz pmz pa),¨special
-        tlsseg←{~hastls:8⍴⊂⍬
-            m←group∊7 8 ⋄ fz←(⌈/x,(group=7)/rel+size)-x←⌊/m/rel
-            mz←(⌈/m/rel+size)-x ⋄ a←⌈/m/align
-            (,7)(,4)(,x)(,base+x)(,base+x)(,fz)(,mz)(,a)
-        }⍬
-        segments←segments,¨tlsseg
-        phdr←{~hasdynamic:8⍴⊂⍬
-            z←56×1+≢⊃segments
-            (,6)(,4)(,64)(,base+64)(,base+64)(,z)(,z)(,8)}⍬
-        segments←phdr,¨segments
-        sections←shnum shstr shstrname shstroff shtoff shstrndx outfilesz osec
-        layout copies sections segments
-    }h s common startsym
-    out←{(shnum shstr shstrname shstroff shtoff shstrndx outfilesz osec)←sections
-        outfilesz OUT∆INIT o.out}⍬
-
-    ⍝ Copy sections
-    _←{(fb view fh0 fhn)←files ⋄ (fm fx fz ox)←copies
+    ⍝ Coalesce adjacent input ranges and copy in bounded batches.
+    _←{f h←⍵
+        (hn ht hf hm hx hz ha he hl hi hb ho hv)←h
+        rows←⍸(ho≥0)∧(ht≠SHT∆NOBITS) ⋄ fm←hm[rows] ⋄ fx←hx[rows] ⋄ fz←hz[rows] ⋄ ox←ho[rows]
         keep←fz>0 ⋄ (fm fx fz ox)←keep∘/¨fm fx fz ox
-        n←≢fz ⋄ join←((1↓fm)=¯1↓fm)∧((1↓fx)=¯1↓fx+fz)∧(1↓ox)=¯1↓ox+fz
-        first←⍸1,~join ⋄ last←¯1+(1↓first),n
+        join←((1↓fm)=¯1↓fm)∧((1↓fx)=¯1↓fx+fz)∧(1↓ox)=¯1↓ox+fz
+        first←⍸1,~join ⋄ last←⍸(~join),1
         fm←fm[first] ⋄ fx←fx[first] ⋄ fz←ox[last]+fz[last]-ox[first] ⋄ ox←ox[first]
-        chunksz←2*19 ⋄ batchbytes←chunksz ⋄ small←fz≤chunksz
-        order←⍋ox ⋄ xo←ox[order] ⋄ zo←fz[order]
-        ∨/(1↓xo)<¯1↓xo+zo:'Overlapping input section copies'⎕SIGNAL 200
-        _←{r←⍸small∧fm=⍵ ⋄ start←¯1↓+\0,fz[r] ⋄ batch←⌊start÷batchbytes
-            _←{q←r/⍨batch=⍵ ⋄ z←fz[q] ⋄ at←¯1↓+\0,z ⋄ i←⍳+/z
-                out[i+z/ox[q]-at]←(⊃fb[fm[⊃q]])[i+z/fx[q]-at]
+        chunksz←2*19 ⋄ small←fz≤chunksz
+        order←⍋ox
+        ∨/(1↓ox[order])<¯1↓ox[order]+fz[order]:'Overlapping input section copy'⎕SIGNAL 200
+        _←{r←⍸small∧(fm=⍵) ⋄ start←(+\-⊢)fz[r] ⋄ batch←⌊start÷chunksz
+            _←{q←r/⍨batch=⍵ ⋄ z←fz[q] ⋄ at←(+\-⊢)z ⋄ i←⍳+/z
+                out[i+z/ox[q]-at]←(⊃f[fm[⊃q]])[i+z/fx[q]-at]
             ⍬}¨∪batch
         ⍬}¨∪small/fm
         _←{row←⍵ ⋄ n←fz[row]
-            pos←chunksz×⍳⌈n÷chunksz ⋄ obj←⊃fb[fm[row]]
+            pos←chunksz×⍳⌈n÷chunksz ⋄ obj←⊃f[fm[row]]
             _←{p←⍵ ⋄ k←chunksz⌊n-p ⋄ i←⍳k
                 out[ox[row]+p+i]←obj[fx[row]+p+i]
             ⍬}¨pos
         ⍬}¨⍸~small
-    ⍬}⍬
+    ⍬}f h
 
-    ⍝ Write dynamic sections
-    _←{(hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab)←dynparts
-        ~hasdynamic:⍬
-        (lx la ls lfz lmz le ld)←layout ⋄ (dx da)←ld ⋄ (dkeep nx dynstr dynsym)←dynamic
-        (pltimport gotimport localgotsym gdimport hasld symbolic relative ip ig lg igt)←dplan
-        (rh rx rs rt ra)←r ⋄ (hn ht hf hm hx hz ha he hl hi)←h ⋄ (initrow finirow initsec finisec)←life
+    ⍝ Write generated dynamic sections at slices given by IMAGE.
+    _←{o h s r special d im←⍵
+        ~d.emit:⍬
+        dx da←im.(off addr)
+        (rh rx rs rt ra rk)←r ⋄ (hn ht hf hm hx hz ha he hl hi hb ho hv)←h ⋄ (sn sb st sy ss sv sz sm si sp sg sx sa)←s
 
-        parts←interp hash dynsym dynstr
-        rows←0 2 3 4
-        _←rows{p←⍺ ⋄ r←⍵
-            out[dx[p]+⍳≢⊃parts[r]]←⊃parts[r]
-        ⍬}¨⍳≢rows
+        _←GEN∆INTERP GEN∆HASH GEN∆SYM GEN∆STR{out[dx[⍺]+⍳≢⍵]←⍵ ⋄ ⍬}¨d.interp d.hash d.sym d.str
 
-        nplt←≢pltimport ⋄ nglob←≢gotimport ⋄ nlocal←≢localgotsym ⋄ ngd←≢gdimport ⋄ ntlsdesc←hasld+ngd
-        pltaddr←da[1]+16×⍳nplt ⋄ gotaddr←da[7]+8×⍳nplt+nglob+nlocal
-        pltgotaddr←gotaddr[ip[pltimport]] ⋄ globaddr←gotaddr[nplt+ig[gotimport]] ⋄ localaddr←gotaddr[nplt+nglob+⍳nlocal]
-        local←localgotsym≠≢⊃s
-        tlsdescaddr←da[7]+8×(nplt+nglob+nlocal)+2×⍳ntlsdesc ⋄ tlsldaddr←hasld×⊃tlsdescaddr,0 ⋄ tlsgdaddr←hasld↓tlsdescaddr
+        order←{q←⍸⍵≥0 ⋄ q[⍋⍵[q]]}
+        pltrow←order sp ⋄ gotrow←order sg
+        gi←gotrow/⍨sm[gotrow]≥0 ⋄ gl←gotrow/⍨sm[gotrow]<0 ⋄ gd←order sx
+        sym rel←(⍸rk=1)(⍸rk=2) ⋄ hasld←∨/rk=3
+        und abs←(≢ht)-3 2
+        row←{q←⍸(~ss∊und abs)∧sn=⍵ ⋄ ⊃q,¯1}
+        init fini←(row special[SPECIAL∆INIT])(row special[SPECIAL∆FINI])
+        isec fsec←(⍸ht=SHT∆INITARRAY)(⍸ht=SHT∆FINIARRAY)
+
+        nplt←≢pltrow ⋄ nglob←≢gi ⋄ nlocal←≢gl ⋄ ngd←≢gd ⋄ ntlsdesc←hasld+ngd
+        pltaddr←da[GEN∆PLT]+16×⍳nplt ⋄ gotaddr←da[GEN∆GOT]+8×⍳nplt+nglob+nlocal
+        pltgotaddr←gotaddr[sp[pltrow]] ⋄ globaddr←gotaddr[sg[gi]] ⋄ localaddr←gotaddr[sg[gl]]
+        local←ss[gl]≠und
+        tlsdescaddr←da[GEN∆GOT]+8×(nplt+nglob+nlocal)+16×⍳ntlsdesc ⋄ tlsgdaddr←tlsdescaddr[sx[gd]]
 
         ⍝ Construct TLS dynamic relocations
-        tlsdynoffset←tlsdescaddr,tlsgdaddr+8 ⋄ tlsdynsym←(hasld/0),1+gdimport
-        tlsdyninfo←16+(2*32)×tlsdynsym ⋄ tlsdyninfo,←17+(2*32)×1+gdimport ⋄ tlsdynadd←tlsdynoffset≢⍛⍴0
+        tlsdynoffset←tlsdescaddr,tlsgdaddr+8
+        tlsdyninfo←16+(2*32)×(hasld/0),si[gd] ⋄ tlsdyninfo,←17+(2*32)×si[gd]
 
         ⍝ PLT entries are jmp *disp32(%rip) followed by padding.
         at←16×⍳nplt
         plt← (4SB pltgotaddr-pltaddr+6)@(,at∘.+2+⍳4)⊢37@(at+1)⊢¯1@at⊢¯112⍴⍨16×nplt
 
-        RELA←{(off info add)←⍵ ⋄ at←24×⍳≢off
-            (8SB add)@(,at∘.+16+⍳8)⊢(8SB info)@(,at∘.+8+⍳8)⊢(8SB off)@(,at∘.+⍳8)⊢0⍴⍨24×≢off}
-
-        info←7+(2*32)×1+pltimport
+        info←7+(2*32)×si[pltrow]
         relaplt←RELA (⊂pltgotaddr),(⊂info),⊂nplt⍴0
-        globinfo←6+(2*32)×1+gotimport ⋄ symbolinfo←1+(2*32)×1+ri[symbolic]
+        globinfo←6+(2*32)×si[gi] ⋄ symbolinfo←1+(2*32)×si[rs[sym]]
 
-        symboloff←la[rh[symbolic]]+rx[symbolic] ⋄ relativeoff←la[rh[relative]]+rx[relative]
-
-        off←tlsdynoffset,globaddr,(o.pie/(local/localaddr)),symboloff,relativeoff
-        info←tlsdyninfo,globinfo,(8⍴⍨o.pie×+/local),symbolinfo,relative≢⍛⍴8
-        add←tlsdynadd,(nglob⍴0),(o.pie/(local/ls[localgotsym])),ra[symbolic],ls[rs[relative]]+ra[relative]
+        off←tlsdynoffset,globaddr,(o.pie/(local/localaddr)),(hv[rh[sym]]+rx[sym]),hv[rh[rel]]+rx[rel]
+        info←tlsdyninfo,globinfo,(8⍴⍨o.pie×+/local),symbolinfo,rel≢⍛⍴8
+        add←(tlsdynoffset≢⍛⍴0),(nglob⍴0),(o.pie/(local/sa[gl])),ra[sym],sa[rs[rel]]+ra[rel]
         dynrela←RELA(⊂off),(⊂info),⊂add
 
-        localvalue←ls[localgotsym]×~o.pie
-        got←(0⍴⍨8×nplt+nglob),(8 SB localvalue),0⍴⍨16×ntlsdesc
+        got←(0⍴⍨8×nplt+nglob),(8SB sa[gl]×~o.pie),0⍴⍨16×ntlsdesc
 
-        out[dx[1]+⍳≢plt]←plt ⋄ out[dx[5]+⍳≢relaplt]←relaplt
-        out[dx[6]+⍳≢dynrela]←dynrela ⋄ out[dx[7]+⍳≢got]←got
+        out[dx[GEN∆PLT]+⍳≢plt]←plt ⋄ out[dx[GEN∆RPLT]+⍳≢relaplt]←relaplt
+        out[dx[GEN∆RELA]+⍳≢dynrela]←dynrela ⋄ out[dx[GEN∆GOT]+⍳≢got]←got
 
-        RANGE←{0=≢⍵:0 0 ⋄ start((⌈/x+hz[⍵])-start←⌊/x←la[⍵])}
-        initarray←RANGE initsec ⋄ finiarray←RANGE finisec
-        hasinit←initrow≥0 ⋄ hasfini←finirow≥0 ⋄ hasinitarray←0<≢initsec ⋄ hasfiniarray←0<≢finisec
+        range←{0=≢⍵:0 0 ⋄ start((⌈/x+hz[⍵])-start←⌊/x←hv[⍵])}
+        initarray←range isec ⋄ finiarray←range fsec
+        hasinit←init≥0 ⋄ hasfini←fini≥0 ⋄ hasinitarray←×≢isec ⋄ hasfiniarray←×≢fsec
         lifetags←(hasinit/12),(hasfini/13),(hasinitarray/25 27),hasfiniarray/26 28
-        lifevalues←(hasinit/ls[0⌈initrow]),(hasfini/ls[0⌈finirow]),(hasinitarray/initarray),hasfiniarray/finiarray
+        lifevalues←(hasinit/sa[0⌈init]),(hasfini/sa[0⌈fini]),(hasinitarray/initarray),hasfiniarray/finiarray
 
-        hasrela←0<≢dynrela
-        tags←(nx≢⍛⍴1),4 5 6 10 11 3 2 20 23,(hasrela/7 8 9),lifetags,30 1879048187 0
-        values←nx,da[2 4 3],(≢dynstr),24,da[7],(≢relaplt),7,da[5],(hasrela/da[6](≢dynrela)24),lifevalues,8 1 0
+        hasrela←×≢dynrela
+        tags←(d.need≢⍛⍴1),4 5 6 10 11 3 2 20 23,(hasrela/7 8 9),lifetags,30 1879048187 0
+        values←d.need,da[GEN∆HASH GEN∆STR GEN∆SYM],(≢d.str),24,da[GEN∆GOT],(≢relaplt),7,da[GEN∆RPLT],(hasrela/da[GEN∆RELA](≢dynrela)24),lifevalues,8 1 0
 
         at←16×⍳≢tags
+        dyntab←d.size[GEN∆DYNAMIC]⍴0
         dyntab[,at∘.+⍳8]←8SB tags ⋄ dyntab[,at∘.+8+⍳8]←8SB values
-        out[dx[8]+⍳≢dyntab]←dyntab
-    ⍬}⍬
+        out[dx[GEN∆DYNAMIC]+⍳≢dyntab]←dyntab
+    ⍬}o h s r special d im
 
-    ⍝ Apply relocations
-    _←{(hn ht hf hm hx hz ha he hl hi)←h ⋄ (rh rx rs rt ra)←r ⋄ (lx la ls lfz lmz le ld)←layout
-        (dx da)←ld ⋄ da←9↑da,9⍴0
-        (pltimport gotimport localgotsym gdimport hasld symbolic relative ip ig lg igt)←dplan
-        (hasdynamic interp plt hash dynsym dynstr relaplt dynrela got dyntab)←dynparts
+    ⍝ Apply relocations, batched by encoded width.
+    _←{o h s r im←⍵
+        (hn ht hf hm hx hz ha he hl hi hb ho hv)←h ⋄ (sn sb st sy ss sv sz sm si sp sg sx sa)←s ⋄ (rh rx rs rt ra rk)←r
+        dx da←im.(off addr) ⋄ da←9↑da,9⍴0
 
-        rr←⍸0≤lx[rh] ⋄ type←rt[rr] ⋄ gottypes←9 41 42
+        rr←⍸0≤ho[rh] ⋄ type←rt[rr] ⋄ gottypes←9 41 42
         ∨/~type∊1 2 4 9 19 20 21 41 42:'Unsupported relocation type'⎕SIGNAL 200
 
-        tlssec←⍸(0≤lx)∧1024≤2048|hf ⋄ tlsbase←{0=≢⍵:0 ⋄ ⌊/la[⍵]}tlssec
-        (nplt nglob nlocal ngd)←≢¨pltimport gotimport localgotsym gdimport ⋄ ntlsdesc←hasld+ngd
-        tlsdescaddr←da[7]+8×(nplt+nglob+nlocal)+2×⍳ntlsdesc ⋄ tlsldaddr←hasld×⊃tlsdescaddr,0 ⋄ tlsgdaddr←hasld↓tlsdescaddr
+        tlsbase←{0=≢⍵:0 ⋄ ⌊/hv[⍵]}⍸(0≤ho)∧2|⌊hf÷SHF∆TLS
+        nplt←+/sp≥0 ⋄ nglob←+/(sg≥0)∧sm≥0 ⋄ nlocal←+/(sg≥0)∧sm<0
+        ngd←+/sx≥0 ⋄ hasld←∨/rk=3 ⋄ ntlsdesc←hasld+ngd
+        tlsdescaddr←da[GEN∆GOT]+8×(nplt+nglob+nlocal)+16×⍳ntlsdesc ⋄ tlsldaddr←hasld×⊃tlsdescaddr,0
 
         batchbytes←2*20 ⍝ avoid large allocation for temporary arrays.
         _←{w←⍵
@@ -865,60 +952,39 @@ LNK←{o←PS∆ARGS ⍵
             _←{first←⍵×span ⋄ q←rr[rows[first+⍳span⌊count-first]]
                 kind←rt[q] ⋄ target←rh[q] ⋄ offset←rx[q] ⋄ targetz←hz[target]
                 ∨/(offset>targetz)∨w>targetz-offset:'Relocation target outside section'⎕SIGNAL 200
-                where←lx[target]+offset ⋄ S←ls[rs[q]] ⋄ import←ri[q] ⋄ imported←import≥0
-                pltref←⍸imported∧kind=4 ⋄ gotref←⍸imported∧kind∊gottypes ⋄ localgotref←⍸(~imported)∧kind∊gottypes
+                where←ho[target]+offset ⋄ sym←rs[q] ⋄ S←sa[sym] ⋄ imported←sm[sym]≥0
+                pltref←⍸imported∧(kind=4) ⋄ gotref←⍸kind∊gottypes
                 tlsldref←⍸kind=20 ⋄ tlsgdref←⍸kind=19 ⋄ dtpoffref←⍸kind=21
-                S[pltref]←da[1]+16×ip[import[pltref]]
-                S[gotref]←da[7]+8×nplt+ig[import[gotref]]
-                S[localgotref]←da[7]+8×nplt+nglob+lg[rs[q[localgotref]]]
-                S[tlsldref]←tlsldaddr ⋄ S[tlsgdref]←tlsgdaddr[igt[import[tlsgdref]]] ⋄ S[dtpoffref]←ls[rs[q[dtpoffref]]]-tlsbase
-                value←S+ra[q]-(la[target]+offset)×kind∊2 4 9 19 20 41 42
-                ∨/(w=4)∧(value<-2*31)∨value≥2*31:'Relocation value overflow'⎕SIGNAL 200
+                S[pltref]←da[GEN∆PLT]+16×sp[sym[pltref]]
+                S[gotref]←da[GEN∆GOT]+8×sg[sym[gotref]]
+                S[tlsldref]←tlsldaddr ⋄ S[tlsgdref]←tlsdescaddr[sx[sym[tlsgdref]]] ⋄ S[dtpoffref]←sa[sym[dtpoffref]]-tlsbase
+                value←S+ra[q]-(hv[target]+offset)×kind∊2 4 9 19 20 41 42
+                ∨/(w=4)∧((value<-2*31)∨value≥2*31):'Relocation value overflow'⎕SIGNAL 200
                 bytes←⊖(w⍴256)⊤value
                 out[(⍳w)∘.+where]←bytes-256×bytes≥128
             ⍬}¨⍳⌈count÷span
         ⍬}¨∪8 4[type≠1]
-    ⍬}⍬
+    ⍬}o h s r im
 
-    (shnum shstr shstrname shstroff shtoff shstrndx outfilesz osec)←sections
-    secname sectype secflags secaddr secoff secsz secalign seclink secinfo secentsize←osec
+    ⍝ Serialize ELF and its program and section metadata.
+    _←{o im sh ph←⍵
+        secname sectype secflags secaddr secoff secsz secalign seclink secinfo secentsize←sh.rows
 
-    ⍝ Construct headers
-    header←{(lx la ls lfz lmz le ld)←layout ⋄ (pt pf px pv pp pfz pmz pa)←segments
-        ident←ELF∆IDENT∆EXP,7⍴0
-        ehdr←,ident
-        ehdr,←2 SB(2+o.pie)62
-        ehdr,←4 SB 1
-        ehdr,←8 SB le 64 shtoff
-        ehdr,←4 SB 0
-        ehdr,←2 SB 64 56(≢pt)64 shnum shstrndx
-        phdr←∊,/4 4 8 8 8 8 8 8{⍺SB⍤0⊢⍵}¨segments
-        ehdr,phdr
-    }⍬
-    out[⍳≢header]←header
+        ⍝ The remaining writes are metadata.
+        out[⍳64+56×≢⊃ph]←{(pt pf px pv pp pz pm pa)←ph
+            ∊(ELF∆IDENT∆EXP,7⍴0 ⋄ 2SB(2+o.pie)62 ⋄ 4SB 1 ⋄ 8SB im.entry 64 sh.offset ⋄ 4SB 0
+              2SB 64 56(≢pt)64 sh.count sh.strindex ⋄ ∊,/4 4 8 8 8 8 8 8(SB⍤0)¨ph)
+        }⍬
 
-    ⍝ Write .shstrtab
-    out[shstroff+⍳≢shstr]←83⎕DR shstr
+        out[sh.stroff+⍳≢sh.str]←83⎕DR sh.str
 
-    ⍝ Construct sections at the end
-    sht←{
-        sh_name      ←(4 SB 0)⍪(4SB⍤0⊢secname)   ⍪(4 SB shstrname)
-        sh_type      ←(4 SB 0)⍪(4SB⍤0⊢sectype)   ⍪(4 SB 3)
-        sh_flags     ←(8 SB 0)⍪(8SB⍤0⊢secflags)  ⍪(8 SB 0)
-        sh_addr      ←(8 SB 0)⍪(8SB⍤0⊢secaddr)   ⍪(8 SB 0)
-        sh_offset    ←(8 SB 0)⍪(8SB⍤0⊢secoff)    ⍪(8 SB shstroff)
-        sh_size      ←(8 SB 0)⍪(8SB⍤0⊢secsz)     ⍪(8 SB ≢shstr)
-        sh_link      ←(4 SB 0)⍪(4SB⍤0⊢seclink)   ⍪(4 SB 0)
-        sh_info      ←(4 SB 0)⍪(4SB⍤0⊢secinfo)   ⍪(4 SB 0)
-        sh_addralign ←(8 SB 0)⍪(8SB⍤0⊢secalign)  ⍪(8 SB 1)
-        sh_entsize   ←(8 SB 0)⍪(8SB⍤0⊢secentsize)⍪(8 SB 0)
-        ∊,/sh_name sh_type sh_flags sh_addr sh_offset sh_size sh_link sh_info sh_addralign sh_entsize
-    }⍬
-    out[shtoff+⍳≢sht]←sht
+        out[sh.offset+⍳64×sh.count]←∊,/4 4 8 8 8 8 4 4 8 8(SB⍤0)¨(
+            0,secname,sh.name ⋄ 0,sectype,3
+            0,secflags,0      ⋄ 0,secaddr,0 ⋄ 0,secoff,sh.stroff ⋄ 0,secsz,≢sh.str
+            0,seclink,0       ⋄ 0,secinfo,0
+            0,secalign,1      ⋄ 0,secentsize,0)
 
-    ⍝ Set expected file permissions
-    chmod←⎕SHELL 'chmod' '+x' '--' o.out
-    0≠2⊃chmod:('Cannot change output file to +x: ',o.out)⎕SIGNAL 200
-
+    ⍬}o im sh ph
+    0≠2⊃⎕SHELL 'chmod' '+x' '--' o.out:('Cannot change output file to +x: ',o.out)⎕SIGNAL 200
     ⍝BREAK
     ⍬}
