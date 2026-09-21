@@ -1,0 +1,96 @@
+Overview
+
+	Cold is a x86-64 System V linker written in APL for fun and as a
+	benchmark of APL implementation performance. Specifically, it is
+	intended to benchmark the Dyalog APL interpreter and, eventually, the
+	Co-dfns compiler.
+
+	Cold currently supports enough common linker functionality to link Clang
+	v21 and use it to link a C hello-world program. Although it is
+	single-threaded, it is relatively competitive with other linkers such as
+	mold and wild in single-threaded mode. At the time of writing, I get the
+	following relative times when linking a release build of Clang v21 on my
+	machine:
+
+		1.00× - wild (--no-threads)       684.7±6.0  ms
+		1.04× - mold (--thread-count=1)   711.3±9.5  ms
+		2.30× - cold (Dyalog interpreter) 1.578±0.007 s
+		7.78× - GNU ld                    5.328±0.028 s
+
+	These values were obtained using the ./bench.sh script.
+
+Running
+
+	Cold currently targets x86_64 Linux and requires Dyalog APL 20.0 to
+	build. Build the standalone executable from the repository root:
+
+		./build.sh
+
+	The resulting ./cold accepts the same command-line form as a
+	conventional linker:
+
+		./cold start.o library.a -o program
+
+	The executable is built with an 8 GB maximum Dyalog workspace. It does
+	not require a Dyalog installation at run time.
+
+Contributing
+
+	We welcome all contributions that simplify the code and make it more
+	readable without sacrificing performance. For further guidance, consult
+	https://github.com/Co-dfns/Co-dfns/blob/19f4542a96766a43ed5b1d918cb9101213be3357/docs/Beautiful%20Code%20is%20Good%20Code.pdf.
+
+	For interactive development, start Dyalog in the repository root and
+	link the development workspace directory:
+
+		]LINK.Create # ws
+
+	UT reloads the linker with LOAD before every run. Run the basic suite
+	with:
+
+		UT.Run 'B'
+
+	Suites run in parallel by default. Use -serial when debugging or
+	measuring the complete suite:
+
+		UT.Run 'B -serial'
+
+	Selectors other than B and I are globs over both suites:
+
+		UT.Run 'test_archive* -serial'
+		UT.Run 'test_norela'
+
+	A single matching test runs in the current workspace and stops on the
+	first line marked with ⍝BREAK, or at the first line of the test when no
+	such line exists. Integration tests use tests/I.apl:
+
+		UT.Run 'I -serial'
+
+	The Clang integration test requires LLVM_BUILD in .env to point to an
+	existing release build of LLVM/Clang:
+
+		LLVM_BUILD=/path/to/llvm-project/build
+		UT.Run 'test_clang -serial'
+
+	It captures the Clang link arguments, links Clang using Cold, then uses
+	the result to compile and run a C hello-world program. Generated
+	objects, archives and shared libraries are kept under
+	tests/assets/.data; final test outputs are written under
+	/tmp/cold-tests.
+
+	Before submitting a change, run the basic suite, the Clang integration
+	test, and rebuild the standalone executable. Performance-sensitive
+	changes should also be tested with the four-linker Clang benchmark. All
+	four linkers must be in PATH:
+
+		./build.sh
+		./bench.sh
+
+	bench.sh checks that /tmp/cold-tests/clang/link.args exists, changes to
+	the Clang driver build directory, and compares single-threaded wild and
+	mold, Cold, and GNU ld with Hyperfine. WARMUP, RUNS, and RESULTS
+	override the default values of 2 warmups and 10 runs.
+
+License
+
+	See ./LICENSE file.

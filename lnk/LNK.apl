@@ -7,6 +7,10 @@ ALIGN←{⍵+⍺|-⍵}
 RELA←{(off info add)←⍵ ⋄ at←24×⍳≢off
     (8SB add)@(,at∘.+16+⍳8)⊢(8SB info)@(,at∘.+8+⍳8)⊢(8SB off)@(,at∘.+⍳8)⊢0⍴⍨24×≢off}
 
+RUN←{0::{e←⎕DMX ⋄ ⎕←e.EM ⋄ ⎕OFF e.EN}⍬
+    args←1↓¯2↓2 ⎕NQ'.' 'GetCommandLineArgs'
+    _←LNK args ⋄ ⎕OFF 0}
+
 ⍝ Entry point
 LNK←{o←PS∆ARGS ⍵
     0=≢o.input: 'Expected at least one input file to link'⎕SIGNAL 200

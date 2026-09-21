@@ -1,0 +1,26 @@
+#!/usr/bin/env dyalogscript
+⎕IO←0
+
+args←2⎕NQ'.' 'GetCommandLineArgs'
+root←⊃1⎕NPARTS⊃args
+dyalog←2 ⎕NQ'.' 'GetEnvironment' 'DYALOG'
+_←2 ⎕FIX'file://',dyalog,'/StartupSession.aplf'
+_←StartupSession⍬
+errors←⎕SE.UCMD'DBuild ',root,'cold.dyalogbuild -production -save=0'
+
+:If ×≢errors
+    ⎕←errors
+    ⎕OFF 1
+:EndIf
+
+:Trap 0
+    :If ⎕NEXISTS root,'cold'
+        _←⎕NDELETE root,'cold'
+    :EndIf
+    2 ⎕NQ'.' 'Bind'(root,'cold')'StandaloneNativeExe' 10 '' '' '-- MAXWS=8G'
+:Else
+    ⎕←↑⎕DMX
+    ⎕OFF 1
+:EndTrap
+
+⎕OFF 0

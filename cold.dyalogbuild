@@ -1,0 +1,7 @@
+DyalogBuild: 1.85
+ID: cold
+
+APL: ws/LOAD.aplf
+EXEC: _←LOAD '.'
+
+LX: cold.RUN ⍬
