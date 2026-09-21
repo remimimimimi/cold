@@ -1,0 +1,11 @@
+tests;root
+:Trap 0
+    root←⊃1 ⎕NPARTS''
+    _←⎕SE.Link.Import # (root,'ws')
+    #.UT.PROJECT_ROOT←root
+    _←#.UT.Run'B -serial'
+:Else
+    ⎕←⎕DMX.DM
+    ⎕OFF 1
+:EndTrap
+⎕OFF 0
